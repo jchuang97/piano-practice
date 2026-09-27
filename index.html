@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Piano">
+<meta name="theme-color" content="#6d4aff">
+<title>Piano Practice</title>
+<link rel="icon" href="img/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="img/icon-180.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ HOME: pick a song ============ -->
+  <section id="home" class="screen active" aria-label="Songs">
+    <header class="home-head">
+      <h1><span class="logo">🎹</span> Piano Practice</h1>
+      <button id="gearHome" class="gear" aria-label="Grown-up settings" title="Grown-ups: songs &amp; settings">⚙️</button>
+    </header>
+    <p class="home-sub">Pick a song!</p>
+    <div id="songGrid" class="song-grid"></div>
+  </section>
+
+  <!-- ============ PRACTICE ============ -->
+  <section id="practice" class="screen" aria-label="Practice">
+    <header class="topbar">
+      <button id="btnHome" class="round-btn" aria-label="Back to songs" title="Songs">🏠</button>
+      <div class="title-box">
+        <div id="songTitle" class="song-title"></div>
+        <div class="badges">
+          <span id="speedBadge" class="badge speed">Speed 100%</span>
+          <span id="modeBadge" class="badge mode"></span>
+        </div>
+      </div>
+      <div class="listen-box" id="listenBox" title="What the app hears">
+        <span id="inputIcon" class="input-icon">🎤</span>
+        <div class="meter" aria-hidden="true"><div id="meterFill" class="meter-fill"></div></div>
+        <div class="hear"><span class="hear-label">I hear:</span> <b id="hearText">–</b></div>
+      </div>
+      <button id="gearPractice" class="gear small" aria-label="Grown-up settings" title="Grown-ups">⚙️</button>
+    </header>
+
+    <div class="score-area">
+      <div id="scoreWrap" class="score-wrap"></div>
+      <div id="bubble" class="bubble" role="status" aria-live="polite"></div>
+      <div id="handPanel" class="hand-panel" hidden>
+        <div id="handSvg" class="hand-svg"></div>
+        <div id="handText" class="hand-text"></div>
+      </div>
+      <div id="startOverlay" class="start-overlay">
+        <button id="btnStart" class="big-start">▶&nbsp; Start</button>
+        <p id="startNote" class="start-note"></p>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="btnPlay" class="ctrl primary" aria-label="Pause">⏸</button>
+      <button id="btnRestart" class="ctrl" title="Start again">↺ Again</button>
+      <button id="btnMode" class="ctrl toggle" title="Wait for me / Play along">🐢 Wait</button>
+      <button id="btnMetro" class="ctrl toggle" title="Metronome click">🥁 Click</button>
+      <div class="loop-box">
+        <button id="btnLoop" class="ctrl toggle" title="Repeat some bars">🔁 Loop</button>
+        <label>bar <select id="loopFrom"></select></label>
+        <label>to <select id="loopTo"></select></label>
+      </div>
+      <div id="hintBox" class="hint-box" role="status" aria-live="polite"></div>
+    </div>
+
+    <div id="keyboard" class="keyboard" aria-label="Piano keyboard"></div>
+  </section>
+
+  <!-- ============ GROWN-UPS ============ -->
+  <section id="parent" class="screen" aria-label="Grown-ups">
+    <header class="parent-head">
+      <button id="btnParentBack" class="round-btn" aria-label="Back">⬅</button>
+      <h2>Grown-ups</h2>
+      <nav class="tabs">
+        <button class="tab active" data-tab="tabSongs">🎼 Songs</button>
+        <button class="tab" data-tab="tabSettings">⚙️ Settings</button>
+        <button class="tab" data-tab="tabHelp">❓ Help</button>
+      </nav>
+    </header>
+
+    <div id="tabSongs" class="tab-page active">
+      <aside class="song-list-panel">
+        <button id="btnNewSong" class="btn primary wide">＋ New song</button>
+        <ul id="songList" class="song-list"></ul>
+        <div class="io-box">
+          <button id="btnExport" class="btn wide">⬇ Download all songs (backup)</button>
+          <button id="btnCopyAll" class="btn wide">📋 Copy all songs as text</button>
+          <label class="btn wide file-btn">⬆ Load a backup file<input type="file" id="fileImport" accept=".json,application/json"></label>
+          <label class="btn wide file-btn">🎼 Import MusicXML<input type="file" id="fileMusicXml" accept=".musicxml,.xml,application/vnd.recordare.musicxml+xml,text/xml"></label>
+          <button id="btnPasteImport" class="btn wide">📥 Paste songs text</button>
+          <button id="btnRestore" class="btn wide subtle">Restore the built-in songs</button>
+        </div>
+      </aside>
+      <div class="editor-panel">
+        <div class="editor-top">
+          <div class="fmt-switch" role="radiogroup" aria-label="Song format">
+            <label><input type="radio" name="fmt" value="simple" checked> Simple</label>
+            <label><input type="radio" name="fmt" value="abc"> ABC</label>
+          </div>
+          <div class="editor-actions">
+            <button id="btnSaveSong" class="btn primary">💾 Save</button>
+            <button id="btnPlaySong" class="btn">▶ Practice</button>
+            <button id="btnDupSong" class="btn" title="Make a copy of this song">📄 Duplicate</button>
+            <button id="btnCopySong" class="btn">📋 Copy text</button>
+            <button id="btnDeleteSong" class="btn danger">🗑 Delete</button>
+          </div>
+        </div>
+        <div class="editor-body">
+          <textarea id="songText" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" aria-label="Song text"></textarea>
+          <div class="cheat">
+            <b>How to write a song</b>
+            <pre>title: My Song
+tempo: 80
+time: 4/4
+Do4 q, Re4 q, Mi4 h |
+Fa#4 q, Sol4 q, La4 h |</pre>
+            <ul>
+              <li>Note = name + octave: <code>Do4</code> <code>Fa#4</code> <code>Sib4</code> (or <code>C4 F#4 Bb4</code>). 4 = middle-C octave.</li>
+              <li>Length after it: <code>w</code> whole, <code>h</code> half, <code>q</code> quarter, <code>e</code> eighth, <code>s</code> 16th; add <code>.</code> for dotted (<code>h.</code>). No length = <code>q</code>.</li>
+              <li><code>|</code> = bar line, <code>R</code> = rest (<code>R h</code>).</li>
+              <li>Finger (optional): <code>/</code> + 1–5 after the note: <code>Si4/5 q</code> (1 = thumb, 5 = pinky). Left hand: <code>Do3/5L</code>.</li>
+              <li>Optional lines: <code>key: G</code>, <code>clef: bass</code>, <code>look: open</code> (round notes without stems), <code>LH:</code> line for a left hand.</li>
+            </ul>
+          </div>
+        </div>
+        <div id="editorMsgs" class="editor-msgs"></div>
+        <div class="preview-label">Preview</div>
+        <div id="previewWrap" class="preview-wrap score-wrap"></div>
+      </div>
+    </div>
+
+    <div id="tabSettings" class="tab-page">
+      <form id="settingsForm" class="settings-form" onsubmit="return false"></form>
+    </div>
+
+    <div id="tabHelp" class="tab-page help-page">
+      <div id="helpContent"></div>
+    </div>
+  </section>
+
+  <!-- ============ END OF SONG ============ -->
+  <div id="endScreen" class="overlay" hidden>
+    <canvas id="confetti"></canvas>
+    <div class="end-card">
+      <h2 id="endTitle">You did it! 🎉</h2>
+      <div id="endStars" class="stars"></div>
+      <ul id="endStats" class="end-stats"></ul>
+      <div class="end-buttons">
+        <button id="btnAgain" class="btn primary big">↺ Play again</button>
+        <button id="btnSongs" class="btn big">🎵 Other songs</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MICROPHONE HELP ============ -->
+  <div id="micHelp" class="overlay" hidden>
+    <div class="help-card">
+      <h2>🎤 The microphone isn't on</h2>
+      <div id="micHelpText"></div>
+      <div class="end-buttons">
+        <button id="btnMicRetry" class="btn primary">Try again</button>
+        <button id="btnMicSkip" class="btn">Use the on-screen keys</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script src="js/vendor/abcjs-basic-min.js"></script>
+<script src="js/pitch.js"></script>
+<script src="js/music.js"></script>
+<script src="js/songs.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/score.js"></script>
+<script src="js/keyboard.js"></script>
+<script src="js/hand.js"></script>
+<script src="js/practice.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
