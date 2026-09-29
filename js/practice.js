@@ -150,10 +150,12 @@
     _setPhase(p) { this.phase = p; this._emit('onPhase', p); }
 
     // ------------------------------------------------------------------ control
-    start(now) {
+    /** leadBeats (optional): beats of lead-in before the first note (default:
+     *  one bar in play-along, one beat in wait mode). */
+    start(now, leadBeats) {
       this.reset();
       if (!this.events.length) return;
-      const lead = this.settings.mode === 'playalong' ? this.beatsPerBar : 1;
+      const lead = leadBeats > 0 ? leadBeats : this.settings.mode === 'playalong' ? this.beatsPerBar : 1;
       this.leadStart = this._startBeat() - lead;
       this.songBeat = this.leadStart;
       this.lastNow = now;

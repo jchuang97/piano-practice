@@ -15,6 +15,9 @@ grown-up can type in **any** song. Works offline, no build step, no accounts.
   both hands), moves the pink line, lights each key in the right octave and shows
   the note name. Nothing is scored, the mic is ignored meanwhile, ⏹ stops it, and
   afterwards a big **🎹 Now you try!** button starts practice.
+- **3-2-1 Go!** countdown (big animated numbers, soft tick, one per second) every
+  time practice starts or resumes; nothing is scored meanwhile; ⏸ / 🏠 / 👂 cancel it
+  (grown-ups can switch it or its tick off).
 - **🐢 / 🐰 speed buttons** (10 % steps, 30 %–120 %), usable mid-song and
   remembered per song on the device.
 - Slows down automatically when it gets hard, speeds up again after a streak
@@ -102,10 +105,24 @@ the app never slows down right after a tap.
 AudioContext clock (follows speed changes live), plays both staves of a grand staff,
 chords, ties and real lengths; rests are silent. The practised hand's keys light
 pink (always the right octave when the keyboard fits the song), the other hand's
-blue when that exact key is on screen. While it plays the microphone is not analysed
-(plus 0.7 s afterwards for the sound to fade), taps/MIDI are not scored, and the
-practice run is reset. On iOS the AudioContext is unlocked in the tap, and Listen
-waits (max 0.8 s) until it is running before starting.
+blue when that exact key is on screen. Taps/MIDI are not scored and the practice
+run is reset.
+
+*Microphone and iPad audio:* Listen switches the microphone really **off** (stops the
+getUserMedia stream) and sets `navigator.audioSession.type = 'playback'` (Safari 17+);
+practice switches it back on (`'auto'` session). Reason: on iOS an open microphone
+keeps the page in the phone-call style "play-and-record" audio route, where Web Audio
+output can become very quiet or silent — in the first version Listen only *ignored*
+the mic, so after a practice run (mic on) Listen could be silent on the iPad, while
+the first Listen before tapping Start worked. The AudioContext is unlocked in the tap;
+if it is closed, "interrupted", or its clock has stopped moving (watchdog in
+`audio.checkClock`), a fresh context is created in that tap (a running mic is
+reconnected to it). Listen then waits (max 0.8 s) until the context runs.
+
+**Countdown.** `runCountdown()` in `js/app.js`: 3 → 2 → 1 → Go! at 1 s steps, then the
+engine starts with a one-beat lead-in (also in play-along). The engine stays idle (or
+paused, when resuming) until Go, so mic/MIDI/taps are ignored. Settings `countdown`
+and `countdownSound` (both on by default).
 
 ## Code map
 
@@ -131,7 +148,8 @@ python3 -m http.server 8765 &          # from this folder
 node tests/format-test.js              # song format unit tests
 node tests/pitch-test.js               # pitch detector on synthetic piano tones
 node tests/make-wavs.js && node tests/mic-e2e.js   # full mic pipeline in Chrome (fake mic)
-node tests/e2e.js                      # UI end-to-end in headless Chrome (incl. timing, 🐢/🐰, 👂 Listen, layout)
+node tests/e2e.js                      # UI end-to-end in headless Chrome (incl. timing, 🐢/🐰, 👂 Listen on every song, countdown, layout)
+node tests/webkit-ipad.js              # Safari engine (WebKit) with the iPad Pro 11 profile
 ```
 (The browser tests need `playwright-core` — `cd tools && npm i` — and Chrome at `/usr/bin/google-chrome`.)
 

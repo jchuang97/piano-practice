@@ -16,25 +16,60 @@
     master: null,
     deafUntil: 0,        // performance.now() until which mic input is ignored (our own sounds)
 
-    /** Must be called from a user gesture (tap/click). Safe to call often. */
+    /**
+     * Must be called from a user gesture (tap/click). Safe to call often.
+     * If the context is broken (closed, iOS "interrupted", or its clock stopped
+     * moving - this can happen on iOS after the microphone changes the audio
+     * route), a fresh AudioContext is made right here, inside the tap.
+     */
     unlock() {
-      if (!this.ctx) {
-        const AC = root.AudioContext || root.webkitAudioContext;
-        if (!AC) return null;
-        this.ctx = new AC({ latencyHint: 'interactive' });
-        this.master = this.ctx.createGain();
-        this.master.gain.value = 0.8;
-        this.master.connect(this.ctx.destination);
-        // iOS may "interrupt" the context (phone call, Siri, lock screen)
-        this.ctx.onstatechange = () => { if (this.onStateChange) this.onStateChange(this.ctx.state); };
-      }
-      if (this.ctx.state !== 'running') { try { this.ctx.resume(); } catch (e) { /* ignore */ } }
+      const AC = root.AudioContext || root.webkitAudioContext;
+      if (!AC) return null;
+      if (this.ctx && (this.ctx.state === 'closed' || this.ctx.state === 'interrupted' || this.stalled)) this.recreate();
+      if (!this.ctx) this._create(AC);
+      if (this.ctx.state !== 'running') { try { const p = this.ctx.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* ignore */ } }
       // Play a silent buffer: the classic iOS unlock trick.
       try {
         const b = this.ctx.createBuffer(1, 1, 22050), s = this.ctx.createBufferSource();
         s.buffer = b; s.connect(this.ctx.destination); s.start(0);
       } catch (e) { /* ignore */ }
       return this.ctx;
+    },
+    _create(AC) {
+      AC = AC || root.AudioContext || root.webkitAudioContext;
+      const ctx = new AC({ latencyHint: 'interactive' });
+      this.ctx = ctx;
+      this.master = ctx.createGain();
+      this.master.gain.value = 0.8;
+      this.master.connect(ctx.destination);
+      this.stalled = false; this._clock = null;
+      // iOS may "interrupt" the context (phone call, Siri, lock screen)
+      ctx.onstatechange = () => { if (ctx === this.ctx && this.onStateChange) this.onStateChange(ctx.state); };
+      this.contexts = (this.contexts || 0) + 1;
+    },
+    /** Replace the AudioContext (keeps a running microphone connected). */
+    recreate() {
+      const old = this.ctx, stream = this.mic.stream;
+      this.voices = [];
+      if (this.mic.source) try { this.mic.source.disconnect(); } catch (e) { /* ignore */ }
+      this._create();
+      if (stream) {
+        const src = this.ctx.createMediaStreamSource(stream), an = this.ctx.createAnalyser();
+        an.fftSize = 2048; an.smoothingTimeConstant = 0; src.connect(an);
+        this.mic = { stream, analyser: an, source: src, buf: new Float32Array(an.fftSize) };
+      }
+      if (old) { old.onstatechange = null; try { const p = old.close(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* ignore */ } }
+    },
+    /** Called every frame: notices a "running" context whose clock is stuck. */
+    checkClock(nowMs) {
+      const c = this.ctx;
+      if (!c || c.state !== 'running') { this._clock = null; return; }
+      if (!this._clock || this._clock.t !== c.currentTime) { this._clock = { t: c.currentTime, wall: nowMs }; this.stalled = false; }
+      else if (nowMs - this._clock.wall > 700) this.stalled = true;
+    },
+    /** iOS (Safari 17+) audio session: 'playback' while the app plays music. */
+    setSession(type) {
+      try { if (navigator.audioSession && navigator.audioSession.type !== type) navigator.audioSession.type = type; } catch (e) { /* ignore */ }
     },
     get running() { return !!this.ctx && this.ctx.state === 'running'; },
 
@@ -107,6 +142,19 @@
       });
       this.voices = [];
     },
+    /** Countdown tick: a soft wooden "tok" (3, 2, 1) and a brighter one for Go. */
+    countTick(go) {
+      if (!this.running) return;
+      const c = this.ctx, t = c.currentTime;
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = 'triangle'; o.frequency.setValueAtTime(go ? 1046 : 784, t);
+      o.frequency.exponentialRampToValueAtTime(go ? 1000 : 700, t + 0.12);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(go ? 0.2 : 0.14, t + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + (go ? 0.35 : 0.16));
+      o.connect(g); g.connect(this.master); o.start(t); o.stop(t + 0.4);
+      this._deaf(go ? 450 : 260);
+    },
     /** Little two-note "ding" for correct notes (high, short, quiet). */
     chime() {
       if (!this.running) return;
@@ -151,8 +199,14 @@
      * Ask for the microphone. Resolves to 'ok' or rejects with an Error whose
      * .code is 'insecure' | 'unsupported' | 'denied' | 'nodevice' | 'other'.
      */
-    async startMic() {
-      if (this.mic.stream) return 'ok';
+    startMic() {
+      if (this.mic.stream) return Promise.resolve('ok');
+      if (!this._micP) this._micP = this._startMic().finally(() => { this._micP = null; });
+      return this._micP;
+    },
+    async _startMic() {
+      this.setSession('auto');           // let iOS pick play-and-record for the mic
+      const gen = this._micGen = (this._micGen || 0) + 1;
       if (!root.isSecureContext) throw Object.assign(new Error('insecure'), { code: 'insecure' });
       if (!this.micSupported()) throw Object.assign(new Error('unsupported'), { code: 'unsupported' });
       let stream;
@@ -168,6 +222,8 @@
       }
       if (!this.ctx) this.unlock();
       if (this.ctx.state !== 'running') { try { await this.ctx.resume(); } catch (e) { /* ignore */ } }
+      if (gen !== this._micGen) { stream.getTracks().forEach(t => t.stop()); return 'cancelled'; }  // Listen started meanwhile
+      if (this.mic.stream) { stream.getTracks().forEach(t => t.stop()); return 'ok'; }
       const src = this.ctx.createMediaStreamSource(stream);
       const an = this.ctx.createAnalyser();
       an.fftSize = 2048;               // ~43 ms at 48 kHz, ~46 ms at 44.1 kHz
@@ -184,6 +240,19 @@
       this.mic = { stream: null, analyser: null, buf: null, source: null };
     },
     get micOn() { return !!this.mic.analyser; },
+    /**
+     * Listen mode: really switch the microphone OFF (not just ignore it). On
+     * iOS an open microphone keeps the page in "play-and-record" (phone-call
+     * style audio route), which can make the app's own music very quiet or
+     * silent. The 'playback' session gives normal loud speaker output.
+     */
+    releaseMicForPlayback() {
+      const had = !!this.mic.stream || !!this._micP;
+      this._micGen = (this._micGen || 0) + 1;   // a mic start still in progress is dropped
+      this.stopMic();
+      this.setSession('playback');
+      return had;
+    },
     /** Latest audio window (Float32Array) or null. */
     readMic() {
       if (!this.mic.analyser) return null;

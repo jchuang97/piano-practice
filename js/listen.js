@@ -67,6 +67,10 @@
       // 1) sounds, a little ahead of time
       const ctx = this.audio.ctx, spb = 60 / bpm;
       const canPlay = ctx && ctx.state === 'running';
+      if (ctx && !canPlay && now - (this._resumeTry || 0) > 1000) {   // e.g. iOS still waking up
+        this._resumeTry = now;
+        try { const p = ctx.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* ignore */ }
+      }
       const aheadBeats = AHEAD_S / spb;
       const schedule = (e) => {
         if (!canPlay) return;

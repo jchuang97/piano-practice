@@ -88,6 +88,8 @@ K:C
     slowFloor: 40,            // percent of the song tempo
     speedUp: true,            // speed back up after a streak
     speedUpStreak: 8,
+    countdown: true,          // 3-2-1-Go before practice starts
+    countdownSound: true,     // soft tick with each number
     metronome: false,
     keySound: true,           // on-screen keys make a sound
     successSound: true,       // soft "ding" on correct notes

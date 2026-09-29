@@ -21,7 +21,7 @@
   function show(id) {
     document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === id));
     app.screen = id;
-    if (id !== 'practice') stopListen('away');
+    if (id !== 'practice') { stopListen('away'); cancelCountdown(); }
     if (id !== 'practice' && app.engine && !app.engine.paused) pausePractice();
   }
 
@@ -49,7 +49,7 @@
     if (!song) return;
     const prep = M.prepareSong(song);
     if (prep.errors.length) { toast('This song has a mistake in it. Open ⚙️ to fix it.'); return; }
-    stopListen('away');
+    stopListen('away'); cancelCountdown();
     app.song = song; app.prep = prep;
     show('practice');
     $('songTitle').textContent = prep.title;
@@ -142,7 +142,7 @@
   }
   function setPlayButton() {
     const e = app.engine, b = $('btnPlay');
-    const playing = e && (e.phase === 'lead' || e.phase === 'moving' || e.phase === 'waiting') && !e.paused;
+    const playing = !!app.counting || (e && (e.phase === 'lead' || e.phase === 'moving' || e.phase === 'waiting') && !e.paused);
     b.textContent = playing ? '⏸' : '▶';
     b.setAttribute('aria-label', playing ? 'Pause' : 'Play');
   }
@@ -181,8 +181,10 @@
 
   async function startMic() {
     try {
-      await audio.startMic();
+      const r = await audio.startMic();
+      if (r === 'cancelled') { updateBadges(); return; }    // Listen was tapped meanwhile
       app.input = 'mic';
+      app.micPaused = false;
       app.tracker.reset();
     } catch (err) {
       app.input = 'screen';
@@ -223,20 +225,75 @@
     hideEnd(); hideFinger();
     app.kb.clearHint();
     $('hintBox').classList.remove('show');
+    $('startOverlay').hidden = true;
+    resumeMicAfterListen();
     const loopOn = $('btnLoop').classList.contains('on');
     app.engine.setLoop(loopOn ? +$('loopFrom').value : null, loopOn ? +$('loopTo').value : null);
-    app.engine.start(performance.now());
+    app.engine.reset();                       // (stops an old run; nothing is scored during the countdown)
+    app.score.setCursor(-1, 0);
+    runCountdown(() => {
+      // after 3-2-1 the line starts right away (one beat of lead-in, also in play-along)
+      app.engine.start(performance.now(), S().countdown ? 1 : 0);
+      setPlayButton(); updateBadges();
+      if (!S().countdown && S().mode === 'playalong') bubble('Get ready… 🎵', 'good', 1500);
+    });
     setPlayButton(); updateBadges();
-    if (S().mode === 'playalong') bubble('Get ready… 🎵', 'good', 1500);
   }
-  function pausePractice() { if (app.engine && app.engine.phase !== 'idle' && app.engine.phase !== 'done') { app.engine.pause(); setPlayButton(); } }
+  /** The mic was switched off for Listen: switch it back on for practice. */
+  function resumeMicAfterListen() {
+    if (app.micPaused && !audio.micOn) { app.micPaused = false; startMic(); }
+  }
+  function pausePractice() {
+    if (app.counting) { const wasResume = app.counting.resume; cancelCountdown(); if (!wasResume) showStartOverlay('start'); }
+    if (app.engine && app.engine.phase !== 'idle' && app.engine.phase !== 'done') { app.engine.pause(); setPlayButton(); }
+  }
   function togglePlay() {
     audio.unlock();
+    if (app.counting) { pausePractice(); return; }            // tap during 3-2-1 = stop
     if (app.listening) { stopListen('practice'); onStartTap(); return; }
     const e = app.engine;
     if (e.phase === 'idle' || e.phase === 'done') { if ($('startOverlay').hidden) startPractice(); else onStartTap(); return; }
-    if (e.paused) e.resume(performance.now()); else e.pause();
+    if (e.paused) { resumeMicAfterListen(); runCountdown(() => { e.resume(performance.now()); setPlayButton(); }, true); }
+    else e.pause();
     setPlayButton();
+  }
+
+  // ------------------------------------------------------------------ 3-2-1 countdown
+  // Big numbers, one per second (3, 2, 1, then "Go! ⭐"), with an optional soft
+  // "tok". Practice (and scoring) only starts at Go. Stop / Home / Listen cancel it.
+  const COUNT_MS = 1000;
+  function runCountdown(onGo, resume) {
+    cancelCountdown();
+    if (!S().countdown) { onGo(); return; }
+    const el = $('countdown');
+    const c = app.counting = { timers: [], resume: !!resume };
+    const showStep = (n) => {
+      el.hidden = false;
+      el.innerHTML = n > 0 ? `<div class="cd-bubble cd-${n}"><span>${n}</span></div>`
+                           : `<div class="cd-bubble cd-go"><span>Go!</span><i>⭐</i></div>`;
+      if (S().countdownSound) audio.countTick(n === 0);
+      if (app.tracker) app.tracker.reset();
+    };
+    app.countdownTimers = c.timers;
+    showStep(3);
+    [2, 1].forEach((n, k) => c.timers.push(setTimeout(() => showStep(n), (k + 1) * COUNT_MS)));
+    c.timers.push(setTimeout(() => {
+      showStep(0);
+      app.counting = null;                    // practice starts now
+      onGo();
+      setPlayButton();
+      c.timers.push(setTimeout(() => { if (!app.counting) el.hidden = true; }, 700));
+    }, 3 * COUNT_MS));
+    app.countdownTimers = c.timers;
+  }
+  function cancelCountdown() {
+    if (app.countdownTimers) app.countdownTimers.forEach(clearTimeout);
+    app.countdownTimers = null;
+    const was = !!app.counting;
+    app.counting = null;
+    const el = $('countdown'); el.hidden = true; el.innerHTML = '';
+    if (was) setPlayButton();
+    return was;
   }
 
   // ------------------------------------------------------------------ speed (🐢 / 🐰)
@@ -254,9 +311,16 @@
   // lights the keys. The microphone is ignored meanwhile so it doesn't hear
   // itself, and nothing is scored. Afterwards: "Now you try!".
   async function toggleListen() {
-    const ctx = audio.unlock();               // inside the tap: unlocks iOS audio
-    if (app.listening) { stopListen('stopped'); return; }
+    if (app.listening) { audio.unlock(); stopListen('stopped'); return; }
     if (!app.prep || !app.score.events.length) return;
+    cancelCountdown();
+    // Switch the microphone really OFF first (not only ignored): on iOS an open
+    // mic puts the page in phone-call style "play-and-record" audio, where the
+    // app's own music can come out very quietly or not at all. Then unlock (or,
+    // if the old context is broken, re-create) the AudioContext inside the tap.
+    if (audio.releaseMicForPlayback() && S().input !== 'screen') app.micPaused = true;
+    app.listenStarting = true;
+    const ctx = audio.unlock();
     // stop any practice run: Listen never scores
     app.engine.reset();
     hideEnd(); hideFinger(); app.kb.clearHint();
@@ -270,6 +334,7 @@
     if (ctx && ctx.state !== 'running') {
       try { await Promise.race([ctx.resume(), new Promise(r => setTimeout(r, 800))]); } catch (e) { /* ignore */ }
     }
+    app.listenStarting = false;
     if (!app.listening) return;               // stopped while waiting
     if (!app.listener.start(performance.now(), app.engine._range())) { app.listening = false; setListenButton(); }
   }
@@ -470,6 +535,7 @@
       }
     }
     if (app.heardUntil && now > app.heardUntil) { $('hearText').textContent = '–'; app.heardUntil = 0; }
+    audio.checkClock(now);
     if (app.engine) app.engine.update(now);
     if (app.listener && app.listener.active) app.listener.update(now);
     requestAnimationFrame(loop);
@@ -490,6 +556,8 @@
       { key: 'timing', label: 'Timing', help: 'How early or late a right note may come and still count. Relaxed is best for little ones.', type: 'select', options: [['relaxed', '😌 Relaxed (most forgiving)'], ['normal', 'Normal'], ['strict', 'Strict']] },
       { key: 'anyOctave', label: 'Accept the right note in any octave', help: 'Recommended with a microphone. Sharps/flats are always checked exactly.', type: 'check' },
       { key: 'hintAfter', label: 'Show a hint after … wrong notes', type: 'number', min: 1, max: 10 },
+      { key: 'countdown', label: 'Count 3-2-1 before playing', type: 'check' },
+      { key: 'countdownSound', label: 'Soft tick with each number', type: 'check' },
       { key: 'metronome', label: 'Metronome click', type: 'check' },
       { key: 'successSound', label: 'Little “ding” for right notes', type: 'check' },
     ] },
@@ -559,7 +627,7 @@
     app.tracker.opts.gate = s.micGate;
     app.tracker.opts.stableMs = s.stableMs;
     app.engine.settings = s;
-    if (key === 'mode' || key === 'hand') stopListen('away');
+    if (key === 'mode' || key === 'hand') { stopListen('away'); cancelCountdown(); }
     const rerender = !key || ['nameStyle', 'namesBelow', 'namesInHeads', 'size', 'hand', 'showFingers'].indexOf(key) >= 0;
     if (key === 'showFingers' && app.prep) { layoutHandPanel(); if (!s.showFingers) hideFinger(); else if (app.engine.target >= 0 && app.engine.phase === 'waiting') showFinger(app.engine.target); }
     if (app.prep && rerender) {
@@ -582,8 +650,10 @@
   <li>The pink line walks over the music and <b>waits</b> at each purple note until it is played (✋ Wait mode). Right notes turn green. In 🎵 Play-along mode the line keeps going and she plays along.</li>
   <li>After ${S().hintAfter} wrong notes a key on the screen keyboard glows and a hint appears. If many notes are hard, the song slows down by itself.</li>
 </ol>
+<h2>3-2-1 Go!</h2>
+<p>Every time practice starts (▶ Start, 🎹 Now you try!, ▶ after a pause, ↺ Again) big numbers count <b>3, 2, 1, Go! ⭐</b>, one per second, with a soft tick. Nothing is scored during the countdown. Tap ⏸ or 🏠 to cancel it. You can switch the countdown or its tick off in ⚙️ Settings → Practice.</p>
 <h2>👂 Listen first</h2>
-<p>Tap <b>👂 Listen</b> and the app plays the song for her at the current speed: the pink line moves along, each key lights up pink on the screen keyboard (in the right octave; the other hand's notes light up blue) and the note name is shown. Nothing is scored, and the microphone is switched off meanwhile so the app doesn't hear itself. Tap <b>⏹ Stop</b> to end it early. Afterwards she gets a big <b>🎹 Now you try!</b> button. (On iPad, turn the volume up; Listen uses the same sound as the on-screen keys.)</p>
+<p>Tap <b>👂 Listen</b> and the app plays the song for her at the current speed: the pink line moves along, each key lights up pink on the screen keyboard (in the right octave; the other hand's notes light up blue) and the note name is shown. Nothing is scored, and the microphone is really switched off meanwhile (so the app doesn't hear itself, and so the iPad plays the music at full volume); it switches back on for practice. Tap <b>⏹ Stop</b> to end it early. Afterwards she gets a big <b>🎹 Now you try!</b> button. (On iPad, turn the volume up; Listen uses the same sound as the on-screen keys.)</p>
 <h2>🐢 Slower / 🐰 Faster</h2>
 <p>The turtle and rabbit buttons change the speed in steps of 10 % (from 30 % to 120 % of the song's tempo), also in the middle of a song. The speed you choose is remembered for that song on this device. The automatic slow-down still helps when many notes are hard, but when it speeds up again after a streak it never goes <b>above</b> the speed you chose (or 100 % if you never touched the buttons).</p>
 <h2>⏱️ Timing</h2>
@@ -689,7 +759,11 @@ E E F G | G F E D | C C D E | E3/2 D/ D2 |]</pre>
     window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (app.screen === 'practice' && app.prep) renderScore(); }, 200); });
     // pause when the tab/app goes to the background
     document.addEventListener('visibilitychange', () => { if (document.hidden) { stopListen('stopped'); pausePractice(); } });
-    audio.onStateChange = (st) => { if (st === 'interrupted' || st === 'suspended') { stopListen('stopped'); pausePractice(); } };
+    audio.onStateChange = (st) => {
+      if (st !== 'interrupted' && st !== 'suspended') return;
+      if (!app.listenStarting) stopListen('stopped');   // (switching the audio session may blip)
+      pausePractice();
+    };
     audio.onMicEnded = () => { app.input = 'screen'; updateBadges(); toast('The microphone stopped. Tap ▶ to continue.'); };
 
     PP.editor.init({ openSong, toast, onSongsChanged: renderHome });
@@ -697,6 +771,6 @@ E E F G | G F E D | C C D E | E3/2 D/ D2 |]</pre>
   }
 
   PP.app.show = show; PP.app.openSong = openSong; PP.app.handleNote = handleNote; PP.app.startPractice = startPractice;
-  PP.app.onStartTap = onStartTap; PP.app.toggleListen = toggleListen; PP.app.stopListen = stopListen;
+  PP.app.onStartTap = onStartTap; PP.app.toggleListen = toggleListen; PP.app.stopListen = stopListen; PP.app.cancelCountdown = cancelCountdown;
   document.addEventListener('DOMContentLoaded', init);
 })();
