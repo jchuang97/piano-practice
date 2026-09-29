@@ -10,7 +10,7 @@
 <title>Piano Practice</title>
 <link rel="icon" href="img/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="img/icon-180.png">
-<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/app.css?v=20260929">
 </head>
 <body>
 <div id="app">
@@ -32,7 +32,6 @@
       <div class="title-box">
         <div id="songTitle" class="song-title"></div>
         <div class="badges">
-          <span id="speedBadge" class="badge speed">Speed 100%</span>
           <span id="modeBadge" class="badge mode"></span>
         </div>
       </div>
@@ -59,11 +58,17 @@
 
     <div class="controls">
       <button id="btnPlay" class="ctrl primary" aria-label="Pause">⏸</button>
-      <button id="btnRestart" class="ctrl" title="Start again">↺ Again</button>
-      <button id="btnMode" class="ctrl toggle" title="Wait for me / Play along">🐢 Wait</button>
-      <button id="btnMetro" class="ctrl toggle" title="Metronome click">🥁 Click</button>
+      <button id="btnListen" class="ctrl listen-btn" title="Listen to the song" aria-label="Listen to the song">👂 Listen</button>
+      <div class="speed-box" role="group" aria-label="Speed">
+        <button id="btnSlower" class="speed-btn" title="Slower" aria-label="Slower">🐢</button>
+        <span id="speedBadge" class="speed-val" aria-live="polite">100%</span>
+        <button id="btnFaster" class="speed-btn" title="Faster" aria-label="Faster">🐰</button>
+      </div>
+      <button id="btnRestart" class="ctrl" title="Start again" aria-label="Start again">↺<span class="lbl"> Again</span></button>
+      <button id="btnMode" class="ctrl toggle" title="Wait for me / Play along">✋ Wait</button>
+      <button id="btnMetro" class="ctrl toggle" title="Metronome click" aria-label="Metronome click">🥁<span class="lbl"> Click</span></button>
       <div class="loop-box">
-        <button id="btnLoop" class="ctrl toggle" title="Repeat some bars">🔁 Loop</button>
+        <button id="btnLoop" class="ctrl toggle" title="Repeat some bars" aria-label="Repeat some bars">🔁<span class="lbl"> Loop</span></button>
         <label>bar <select id="loopFrom"></select></label>
         <label>to <select id="loopTo"></select></label>
       </div>
@@ -174,16 +179,17 @@ Fa#4 q, Sol4 q, La4 h |</pre>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </div>
 
-<script src="js/vendor/abcjs-basic-min.js"></script>
-<script src="js/pitch.js"></script>
-<script src="js/music.js"></script>
-<script src="js/songs.js"></script>
-<script src="js/audio.js"></script>
-<script src="js/score.js"></script>
-<script src="js/keyboard.js"></script>
-<script src="js/hand.js"></script>
-<script src="js/practice.js"></script>
-<script src="js/editor.js"></script>
-<script src="js/app.js"></script>
+<script src="js/vendor/abcjs-basic-min.js?v=20260929"></script>
+<script src="js/pitch.js?v=20260929"></script>
+<script src="js/music.js?v=20260929"></script>
+<script src="js/songs.js?v=20260929"></script>
+<script src="js/audio.js?v=20260929"></script>
+<script src="js/score.js?v=20260929"></script>
+<script src="js/keyboard.js?v=20260929"></script>
+<script src="js/hand.js?v=20260929"></script>
+<script src="js/practice.js?v=20260929"></script>
+<script src="js/listen.js?v=20260929"></script>
+<script src="js/editor.js?v=20260929"></script>
+<script src="js/app.js?v=20260929"></script>
 </body>
 </html>

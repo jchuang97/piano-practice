@@ -11,8 +11,17 @@ grown-up can type in **any** song. Works offline, no build step, no accounts.
   keyboard** on desktop Chrome, or taps on the **on-screen keyboard**.
 - After 3 wrong tries: the right key glows, a hint explains where it is
   ("Use finger 2 (index) on Fa# (Fa sostenido) — it's the BLACK key just to the right of Fa…").
-- Slows down automatically when it gets hard, speeds up again after a streak.
-- Wait-for-me / Play-along modes, loop bars, metronome, celebration screen.
+- **👂 Listen**: the app plays the song itself (piano-like tone, current speed,
+  both hands), moves the pink line, lights each key in the right octave and shows
+  the note name. Nothing is scored, the mic is ignored meanwhile, ⏹ stops it, and
+  afterwards a big **🎹 Now you try!** button starts practice.
+- **🐢 / 🐰 speed buttons** (10 % steps, 30 %–120 %), usable mid-song and
+  remembered per song on the device.
+- Slows down automatically when it gets hard, speeds up again after a streak
+  (but never above the speed picked with 🐢/🐰).
+- **Timing** (grown-ups setting: relaxed / normal / strict, default relaxed):
+  how early or late a right note may come; early/late right notes simply count as right.
+- ✋ Wait-for-me / 🎵 Play-along modes, loop bars, metronome, celebration screen.
 
 ## Run it
 
@@ -61,6 +70,43 @@ MusicXML files (uncompressed `.musicxml`/`.xml`) can be imported into the simple
 Songs live in the browser's storage on that device: use **Download all songs (backup)**
 in ⚙️ → Songs, and **Load a backup file** to restore or move them.
 
+## Timing, speed and Listen (details)
+
+**Timing windows** (`TIMING` in `js/practice.js`). Each window is in beats, with a
+minimum in milliseconds (whichever is larger), so it grows for slow songs / slow
+speeds and still covers the microphone's small delay in fast songs:
+
+| Timing | Play-along: early | Play-along: late | Wait mode: next note early |
+|---|---|---|---|
+| **Relaxed** (default) | 0.9 beat / ≥ 550 ms | 1.25 beat / ≥ 800 ms | 1.5 beat / ≥ 800 ms |
+| Normal | 0.6 beat / ≥ 350 ms | 0.8 beat / ≥ 500 ms | 1.0 beat / ≥ 550 ms |
+| Strict | 0.35 beat / ≥ 200 ms | 0.5 beat / ≥ 300 ms | 0.75 beat / ≥ 400 ms |
+
+The late window is never shorter than "until ¼ beat before the note ends", so long
+notes stay generous. Example, Mary (90 bpm) at 100 %: relaxed accepts a note from
+600 ms early to 833 ms late (the old rule was 267 ms early / 400 ms late, and only
+67 ms late for an eighth note); at 50 % speed: 1200 ms / 1667 ms.
+In Play-along the right note inside its window always counts (even when the line is
+already on the next note); a right note that comes too late is ignored, never
+flashed as wrong. Wait mode waits anyway; its window is only for a next note played
+while the line is still moving.
+
+**Speed.** 🐢/🐰 set the speed in 10 % steps (30–120 %) and store it per song
+(`localStorage` key `pianoPractice.speeds.v1`). A manually chosen speed becomes the
+*ceiling* for the automatic speed-up: automatic slow-down still helps when it gets
+hard, and after a streak the speed climbs back up only to the chosen speed (100 % if
+the buttons were never used). Choosing a speed also resets the mistake counter, so
+the app never slows down right after a tap.
+
+**Listen** (`js/listen.js`). Schedules `PP.audio.pianoNote` 0.2 s ahead on the
+AudioContext clock (follows speed changes live), plays both staves of a grand staff,
+chords, ties and real lengths; rests are silent. The practised hand's keys light
+pink (always the right octave when the keyboard fits the song), the other hand's
+blue when that exact key is on screen. While it plays the microphone is not analysed
+(plus 0.7 s afterwards for the sound to fade), taps/MIDI are not scored, and the
+practice run is reset. On iOS the AudioContext is unlocked in the tap, and Listen
+waits (max 0.8 s) until it is running before starting.
+
 ## Code map
 
 | File | What it does |
@@ -69,11 +115,12 @@ in ⚙️ → Songs, and **Load a backup file** to restore or move them.
 | `js/pitch.js` | YIN pitch detector + note tracker (stability, onset/debounce, octave-slip guard). Pure JS, also runs in Node |
 | `js/music.js` | note names (solfège/letters), hint texts, simple-format parser → ABC, MusicXML import |
 | `js/songs.js` | built-in songs, settings defaults, localStorage, backup |
-| `js/audio.js` | AudioContext (iOS unlock), microphone (all voice filters OFF), soft sounds, Web MIDI |
+| `js/audio.js` | AudioContext (iOS unlock), microphone (all voice filters OFF), soft sounds, piano tone for Listen, Web MIDI |
 | `js/score.js` | renders with abcjs, maps notes to screen positions, cursor, colours, labels |
 | `js/keyboard.js` | on-screen keyboard |
 | `js/hand.js` | hand diagram SVG with the finger highlighted |
-| `js/practice.js` | practice engine: wait / play-along, hints, adaptive tempo, loop |
+| `js/practice.js` | practice engine: wait / play-along, timing windows, hints, adaptive + manual speed, loop |
+| `js/listen.js` | Listen mode: plays the song, moves the cursor, lights keys, no scoring |
 | `js/editor.js` | grown-ups' song editor with live preview |
 | `js/app.js` | screens, settings, input routing, feedback, end screen |
 
@@ -84,7 +131,7 @@ python3 -m http.server 8765 &          # from this folder
 node tests/format-test.js              # song format unit tests
 node tests/pitch-test.js               # pitch detector on synthetic piano tones
 node tests/make-wavs.js && node tests/mic-e2e.js   # full mic pipeline in Chrome (fake mic)
-node tests/e2e.js                      # UI end-to-end in headless Chrome
+node tests/e2e.js                      # UI end-to-end in headless Chrome (incl. timing, 🐢/🐰, 👂 Listen, layout)
 ```
 (The browser tests need `playwright-core` — `cd tools && npm i` — and Chrome at `/usr/bin/google-chrome`.)
 

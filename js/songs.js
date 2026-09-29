@@ -68,6 +68,7 @@ K:C
 
   const SONGS_KEY = 'pianoPractice.songs.v1';
   const SETTINGS_KEY = 'pianoPractice.settings.v1';
+  const SPEEDS_KEY = 'pianoPractice.speeds.v1';    // { songId: percent } chosen with 🐢/🐰
 
   const DEFAULT_SETTINGS = {
     nameStyle: 'solfege',     // 'solfege' (Do Re Mi) or 'letters' (C D E)
@@ -78,6 +79,7 @@ K:C
     namesBelow: true,         // coloured note names under the notes
     showFingers: true,        // finger numbers on the music + hand picture
     keyLabels: true,          // names on the on-screen keys
+    timing: 'relaxed',        // how early/late a note may be: 'relaxed' | 'normal' | 'strict'
     hintAfter: 3,             // wrong tries before a hint
     adaptive: true,           // slow down after many mistakes
     slowWrong: 4,             // more than this many wrong ...
@@ -135,6 +137,9 @@ K:C
     newId() { return 'song-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6); },
     getSettings() { return Object.assign({}, DEFAULT_SETTINGS, load(SETTINGS_KEY, {})); },
     saveSettings(s) { return save(SETTINGS_KEY, s); },
+    /** Speed (percent) picked with the turtle/rabbit buttons for a song, or null. */
+    getSongSpeed(id) { const v = load(SPEEDS_KEY, {})[id]; return typeof v === 'number' && v >= 10 && v <= 200 ? v : null; },
+    setSongSpeed(id, pct) { const all = load(SPEEDS_KEY, {}); if (pct === null) delete all[id]; else all[id] = pct; save(SPEEDS_KEY, all); },
     /** Everything in one JSON blob for backup. */
     exportAll() { return JSON.stringify({ app: 'piano-practice', version: 1, exported: new Date().toISOString(), songs: this.getSongs() }, null, 2); },
     /** Merge songs from a backup (same id => replaced). Returns number imported. */

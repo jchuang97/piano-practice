@@ -21,6 +21,7 @@
   function show(id) {
     document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === id));
     app.screen = id;
+    if (id !== 'practice') stopListen('away');
     if (id !== 'practice' && app.engine && !app.engine.paused) pausePractice();
   }
 
@@ -48,10 +49,13 @@
     if (!song) return;
     const prep = M.prepareSong(song);
     if (prep.errors.length) { toast('This song has a mistake in it. Open ⚙️ to fix it.'); return; }
+    stopListen('away');
     app.song = song; app.prep = prep;
     show('practice');
     $('songTitle').textContent = prep.title;
     app.engine.load(prep.tempo, prep.time);
+    const saved = store.getSongSpeed(song.id);           // speed picked with 🐢/🐰 last time
+    if (saved !== null) app.engine.setManualSpeed(saved, true);
     renderScore();
     if (layoutHandPanel()) renderScore();   // the music gets narrower/wider
     buildKeyboard();
@@ -59,9 +63,20 @@
     updateBadges();
     $('hintBox').classList.remove('show');
     hideFinger();
-    $('startOverlay').hidden = false;
-    $('startNote').innerHTML = startNoteText();
+    showStartOverlay('start');
     setPlayButton();
+  }
+  /** kind 'start' = normal ▶ Start, 'try' = after Listen: "Now you try!" */
+  function showStartOverlay(kind) {
+    $('startOverlay').hidden = false;
+    $('startOverlay').classList.toggle('try', kind === 'try');
+    if (kind === 'try') {
+      $('btnStart').innerHTML = '🎹&nbsp; Now you try!';
+      $('startNote').innerHTML = "That's how it sounds! 🎶 Now it's your turn.<br>Tap 👂 Listen to hear it again.";
+    } else {
+      $('btnStart').innerHTML = '▶&nbsp; Start';
+      $('startNote').innerHTML = startNoteText();
+    }
   }
 
   function renderScore() {
@@ -95,6 +110,7 @@
     }
     $('loopFrom').value = '1'; $('loopTo').value = String(Math.min(n, 2));
     $('btnLoop').classList.remove('on');
+    $('btnLoop').parentElement.classList.remove('on');
   }
 
   function startNoteText() {
@@ -110,10 +126,14 @@
   function updateBadges() {
     const sp = app.engine ? app.engine.speedPct : 100;
     const b = $('speedBadge');
-    b.textContent = `Speed ${sp}%`;
+    b.textContent = `${sp}%`;
+    b.title = `Speed ${sp}%` + (app.engine && app.engine.manualSpeed !== null ? ' (chosen with 🐢/🐰)' : '');
     b.classList.toggle('slow', sp < 100);
-    $('modeBadge').textContent = S().mode === 'wait' ? '🐢 Wait for me' : '🎵 Play along';
-    $('btnMode').textContent = S().mode === 'wait' ? '🐢 Wait' : '🎵 Play along';
+    b.classList.toggle('fast', sp > 100);
+    $('btnSlower').disabled = sp <= PP.Practice.SPEED_MIN;
+    $('btnFaster').disabled = sp >= PP.Practice.SPEED_MAX;
+    $('modeBadge').textContent = S().mode === 'wait' ? '✋ Wait for me' : '🎵 Play along';
+    $('btnMode').textContent = S().mode === 'wait' ? '✋ Wait' : '🎵 Play along';
     $('btnMode').classList.toggle('on', S().mode === 'playalong');
     $('btnMetro').classList.toggle('on', !!S().metronome);
     const icon = app.input === 'midi' ? '🎹' : app.input === 'mic' ? '🎤' : '👆';
@@ -130,6 +150,7 @@
   // ------------------------------------------------------------------ start / inputs
   async function onStartTap() {
     audio.unlock();                           // must happen inside the tap (iOS)
+    stopListen('practice');
     $('startOverlay').hidden = true;
     if (!app.started) {
       app.started = true;
@@ -198,6 +219,7 @@
 
   // ------------------------------------------------------------------ practice control
   function startPractice() {
+    stopListen('practice');
     hideEnd(); hideFinger();
     app.kb.clearHint();
     $('hintBox').classList.remove('show');
@@ -210,10 +232,75 @@
   function pausePractice() { if (app.engine && app.engine.phase !== 'idle' && app.engine.phase !== 'done') { app.engine.pause(); setPlayButton(); } }
   function togglePlay() {
     audio.unlock();
+    if (app.listening) { stopListen('practice'); onStartTap(); return; }
     const e = app.engine;
     if (e.phase === 'idle' || e.phase === 'done') { if ($('startOverlay').hidden) startPractice(); else onStartTap(); return; }
     if (e.paused) e.resume(performance.now()); else e.pause();
     setPlayButton();
+  }
+
+  // ------------------------------------------------------------------ speed (🐢 / 🐰)
+  // A tap sets the speed by one 10 % step (30 %…120 %), works mid-song, and is
+  // remembered for this song on this device. The chosen speed is also the
+  // ceiling for the automatic speed-up (see practice.js).
+  function stepSpeed(dir) {
+    audio.unlock();
+    const pct = app.engine.stepSpeed(dir);
+    if (app.song) store.setSongSpeed(app.song.id, pct);
+  }
+
+  // ------------------------------------------------------------------ listen mode (👂)
+  // The app plays the song (current speed, both hands), moves the cursor and
+  // lights the keys. The microphone is ignored meanwhile so it doesn't hear
+  // itself, and nothing is scored. Afterwards: "Now you try!".
+  async function toggleListen() {
+    const ctx = audio.unlock();               // inside the tap: unlocks iOS audio
+    if (app.listening) { stopListen('stopped'); return; }
+    if (!app.prep || !app.score.events.length) return;
+    // stop any practice run: Listen never scores
+    app.engine.reset();
+    hideEnd(); hideFinger(); app.kb.clearHint();
+    $('hintBox').classList.remove('show');
+    $('startOverlay').hidden = true;
+    const loopOn = $('btnLoop').classList.contains('on');
+    app.engine.setLoop(loopOn ? +$('loopFrom').value : null, loopOn ? +$('loopTo').value : null);
+    app.listening = true;
+    setListenButton(); setPlayButton();
+    // iOS resumes the AudioContext asynchronously: wait (briefly) until it runs
+    if (ctx && ctx.state !== 'running') {
+      try { await Promise.race([ctx.resume(), new Promise(r => setTimeout(r, 800))]); } catch (e) { /* ignore */ }
+    }
+    if (!app.listening) return;               // stopped while waiting
+    if (!app.listener.start(performance.now(), app.engine._range())) { app.listening = false; setListenButton(); }
+  }
+  /** why: 'done' (finished) | 'stopped' (Stop tapped) | 'practice' | 'away' */
+  function stopListen(why) {
+    if (!app.listening) return;
+    app.listening = false;
+    if (app.listener.active) app.listener.stop();
+    audio.stopVoices();
+    audio._deaf(700);                         // let the last notes fade before listening again
+    if (app.tracker) app.tracker.reset();
+    $('bubble').classList.remove('show', 'listen');
+    setListenButton(); setPlayButton();
+    if (why === 'done' || why === 'stopped') showStartOverlay('try');
+  }
+  function setListenButton() {
+    const b = $('btnListen');
+    b.textContent = app.listening ? '⏹ Stop' : '👂 Listen';
+    b.classList.toggle('on', !!app.listening);
+    b.setAttribute('aria-label', app.listening ? 'Stop listening' : 'Listen to the song');
+  }
+  function showListenNote(e) {
+    const b = $('bubble');
+    clearTimeout(bubbleTimer);
+    b.className = 'bubble show listen';
+    if (!e) { b.textContent = '🤫'; return; }
+    const style = S().nameStyle;
+    b.innerHTML = '🎵 ' + e.midis.slice().sort((x, y) => x - y).map(m => {
+      const sp = e.midis.length === 1 ? e.sp : M.midiToSpell(m);
+      return `<span style="color:${M.NOTE_COLORS[sp.letter]}">${esc(M.noteName(sp, style))}</span>`;
+    }).join(' ');
   }
 
   // ------------------------------------------------------------------ notes in
@@ -223,7 +310,7 @@
     if (source === 'screen' && S().keySound) audio.playNote(midi, 0.7);
     if (source !== 'screen') app.kb.flash(midi, 'heard', 300);
     if (source === 'midi' || source === 'screen') showHeard(midi);
-    if (app.screen !== 'practice') return;
+    if (app.screen !== 'practice' || app.listening) return;   // Listen mode: nothing is scored
     const r = app.engine.input(midi);
     if (r === 'wrong') app.kb.flash(midi, 'oops', 500);
   }
@@ -301,7 +388,8 @@
     onHintClear() { app.kb.clearHint(); $('hintBox').classList.remove('show'); },
     onSpeed(pct, dir) {
       updateBadges();
-      if (dir === 'down') bubble("Let's slow down a little! 🐢", 'slow', 2200);
+      if (dir === 'manual') { if (app.screen === 'practice' && !app.listening) bubble(`${pct < 100 ? '🐢' : pct > 100 ? '🐰' : '🎵'} ${pct}%`, 'good', 900); }
+      else if (dir === 'down') bubble("Let's slow down a little! 🐢", 'slow', 2200);
       else bubble("You're doing great — a bit faster! 🚀", 'good', 2200);
     },
     onBeat(accent) { audio.click(accent); },
@@ -361,7 +449,9 @@
   function loop() {
     const now = performance.now();
     // Microphone: analyse the latest ~43 ms of audio every frame.
-    if (audio.micOn) {
+    if (audio.micOn && app.listening) {
+      $('meterFill').style.width = '0%';          // Listen mode: the mic is not used
+    } else if (audio.micOn) {
       const buf = audio.readMic();
       const level = PP.pitch.rms(buf);
       const pct = Math.min(1, Math.sqrt(level / 0.15));
@@ -381,6 +471,7 @@
     }
     if (app.heardUntil && now > app.heardUntil) { $('hearText').textContent = '–'; app.heardUntil = 0; }
     if (app.engine) app.engine.update(now);
+    if (app.listener && app.listener.active) app.listener.update(now);
     requestAnimationFrame(loop);
   }
 
@@ -395,7 +486,8 @@
       { key: 'hand', label: 'Hand to practise', help: 'Only for songs with two staves (LH: line)', type: 'select', options: [['rh', 'Right hand (top)'], ['lh', 'Left hand (bottom)']] },
     ] },
     { group: '🎮 Practice', rows: [
-      { key: 'mode', label: 'Mode', type: 'select', options: [['wait', '🐢 Wait for me'], ['playalong', '🎵 Play along']] },
+      { key: 'mode', label: 'Mode', type: 'select', options: [['wait', '✋ Wait for me'], ['playalong', '🎵 Play along']] },
+      { key: 'timing', label: 'Timing', help: 'How early or late a right note may come and still count. Relaxed is best for little ones.', type: 'select', options: [['relaxed', '😌 Relaxed (most forgiving)'], ['normal', 'Normal'], ['strict', 'Strict']] },
       { key: 'anyOctave', label: 'Accept the right note in any octave', help: 'Recommended with a microphone. Sharps/flats are always checked exactly.', type: 'check' },
       { key: 'hintAfter', label: 'Show a hint after … wrong notes', type: 'number', min: 1, max: 10 },
       { key: 'metronome', label: 'Metronome click', type: 'check' },
@@ -407,7 +499,7 @@
       { key: 'slowWindow', label: '… within the last … notes', type: 'number', min: 2, max: 30 },
       { key: 'slowStep', label: 'Slow down by (%)', type: 'number', min: 5, max: 50 },
       { key: 'slowFloor', label: 'Never slower than (% of song tempo)', type: 'number', min: 20, max: 100 },
-      { key: 'speedUp', label: 'Speed up again after a streak', type: 'check' },
+      { key: 'speedUp', label: 'Speed up again after a streak', help: 'Never faster than the speed chosen with 🐢/🐰 (or 100 %).', type: 'check' },
       { key: 'speedUpStreak', label: 'Streak length (notes right first time)', type: 'number', min: 3, max: 30 },
     ] },
     { group: '🎤 Listening', rows: [
@@ -467,13 +559,14 @@
     app.tracker.opts.gate = s.micGate;
     app.tracker.opts.stableMs = s.stableMs;
     app.engine.settings = s;
+    if (key === 'mode' || key === 'hand') stopListen('away');
     const rerender = !key || ['nameStyle', 'namesBelow', 'namesInHeads', 'size', 'hand', 'showFingers'].indexOf(key) >= 0;
     if (key === 'showFingers' && app.prep) { layoutHandPanel(); if (!s.showFingers) hideFinger(); else if (app.engine.target >= 0 && app.engine.phase === 'waiting') showFinger(app.engine.target); }
     if (app.prep && rerender) {
       if (key === 'hand') { app.engine.reset(); renderScore(); fillLoopSelects(); } else renderScore();
     }
     if (app.prep && (!key || ['nameStyle', 'keyLabels', 'kbAuto', 'kbStart', 'kbOctaves', 'hand'].indexOf(key) >= 0)) buildKeyboard();
-    if (key === 'mode') { app.engine.reset(); $('startOverlay').hidden = !app.prep ? true : false; $('startNote').innerHTML = startNoteText(); }
+    if (key === 'mode') { app.engine.reset(); if (app.prep) showStartOverlay('start'); else $('startOverlay').hidden = true; }
     if (key === 'input' && app.started) { app.started = false; audio.stopMic(); app.input = 'screen'; }
     updateBadges();
     if (PP.editor) PP.editor.refreshPreview();
@@ -486,9 +579,15 @@
 <ol>
   <li>Put the tablet on the piano's music stand, close to the piano, and pick a song.</li>
   <li>Tap <b>▶ Start</b> and allow the <b>microphone</b>. The meter next to 🎤 moves when the app hears sound, and “I hear” shows the note.</li>
-  <li>The pink line walks over the music and <b>waits</b> at each purple note until it is played. Right notes turn green.</li>
+  <li>The pink line walks over the music and <b>waits</b> at each purple note until it is played (✋ Wait mode). Right notes turn green. In 🎵 Play-along mode the line keeps going and she plays along.</li>
   <li>After ${S().hintAfter} wrong notes a key on the screen keyboard glows and a hint appears. If many notes are hard, the song slows down by itself.</li>
 </ol>
+<h2>👂 Listen first</h2>
+<p>Tap <b>👂 Listen</b> and the app plays the song for her at the current speed: the pink line moves along, each key lights up pink on the screen keyboard (in the right octave; the other hand's notes light up blue) and the note name is shown. Nothing is scored, and the microphone is switched off meanwhile so the app doesn't hear itself. Tap <b>⏹ Stop</b> to end it early. Afterwards she gets a big <b>🎹 Now you try!</b> button. (On iPad, turn the volume up; Listen uses the same sound as the on-screen keys.)</p>
+<h2>🐢 Slower / 🐰 Faster</h2>
+<p>The turtle and rabbit buttons change the speed in steps of 10 % (from 30 % to 120 % of the song's tempo), also in the middle of a song. The speed you choose is remembered for that song on this device. The automatic slow-down still helps when many notes are hard, but when it speeds up again after a streak it never goes <b>above</b> the speed you chose (or 100 % if you never touched the buttons).</p>
+<h2>⏱️ Timing</h2>
+<p>In ⚙️ Settings → <i>Timing</i> you choose how early or late a right note may come and still count: <b>Relaxed</b> (default, most forgiving), <b>Normal</b> or <b>Strict</b>. The window grows automatically for slow songs and slow speeds. A right note that is a little early or late simply counts as right; in Play-along a note that comes too late is quietly skipped, never scolded. Relaxed at tempo 90: up to 0.6 s early and 0.8 s late (longer notes: until they end).</p>
 <p><b>Digital piano tips:</b> use a normal “piano” sound, one note at a time, and turn the volume up a bit. Keep the room quiet (no TV). If it hears notes nobody played, lower the <i>Microphone sensitivity</i> in Settings. You can also tap the keys on the screen.</p>
 <h2>Writing songs (Simple format)</h2>
 <pre>title: Lazy Song
@@ -528,6 +627,12 @@ E E F G | G F E D | C C D E | E3/2 D/ D2 |]</pre>
     app.kb = new PP.Keyboard($('keyboard'), (midi) => { audio.unlock(); handleNote(midi, 'screen'); });
     app.tracker = new PP.pitch.NoteTracker({ gate: S().micGate, stableMs: S().stableMs });
     app.engine = new PP.Practice(app.score, S(), hooks);
+    app.listener = new PP.Listener({
+      score: app.score, kb: app.kb, audio,
+      getBpm: () => app.engine.bpm,
+      onNote: (e) => showListenNote(e),
+      onDone: (completed) => stopListen(completed ? 'done' : 'stopped'),
+    });
 
     renderHome();
     renderSettings();
@@ -536,16 +641,20 @@ E E F G | G F E D | C C D E | E3/2 D/ D2 |]</pre>
     $('btnStart').addEventListener('click', onStartTap);
     $('btnHome').addEventListener('click', () => { show('home'); renderHome(); });
     $('btnPlay').addEventListener('click', togglePlay);
-    $('btnRestart').addEventListener('click', () => { audio.unlock(); $('startOverlay').hidden = true; if (!app.started) onStartTap(); else startPractice(); });
+    $('btnRestart').addEventListener('click', () => { audio.unlock(); stopListen('practice'); $('startOverlay').hidden = true; if (!app.started) onStartTap(); else startPractice(); });
+    $('btnListen').addEventListener('click', toggleListen);
+    $('btnSlower').addEventListener('click', () => stepSpeed(-1));
+    $('btnFaster').addEventListener('click', () => stepSpeed(+1));
     $('btnMode').addEventListener('click', () => {
       setSetting('mode', S().mode === 'wait' ? 'playalong' : 'wait');
       renderSettings();
-      bubble(S().mode === 'wait' ? '🐢 Wait for me' : '🎵 Play along', 'good');
+      bubble(S().mode === 'wait' ? '✋ Wait for me' : '🎵 Play along', 'good');
     });
     $('btnMetro').addEventListener('click', () => { audio.unlock(); setSetting('metronome', !S().metronome); renderSettings(); });
     $('btnLoop').addEventListener('click', () => {
       const on = !$('btnLoop').classList.contains('on');
       $('btnLoop').classList.toggle('on', on);
+      $('btnLoop').parentElement.classList.toggle('on', on);
       bubble(on ? `🔁 Bars ${$('loopFrom').value}–${$('loopTo').value}` : 'Whole song', 'good');
       if (app.engine.phase !== 'idle') startPractice();
     });
@@ -579,8 +688,8 @@ E E F G | G F E D | C C D E | E3/2 D/ D2 |]</pre>
     let rt = null;
     window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (app.screen === 'practice' && app.prep) renderScore(); }, 200); });
     // pause when the tab/app goes to the background
-    document.addEventListener('visibilitychange', () => { if (document.hidden) pausePractice(); });
-    audio.onStateChange = (st) => { if (st === 'interrupted' || st === 'suspended') pausePractice(); };
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { stopListen('stopped'); pausePractice(); } });
+    audio.onStateChange = (st) => { if (st === 'interrupted' || st === 'suspended') { stopListen('stopped'); pausePractice(); } };
     audio.onMicEnded = () => { app.input = 'screen'; updateBadges(); toast('The microphone stopped. Tap ▶ to continue.'); };
 
     PP.editor.init({ openSong, toast, onSongsChanged: renderHome });
@@ -588,6 +697,6 @@ E E F G | G F E D | C C D E | E3/2 D/ D2 |]</pre>
   }
 
   PP.app.show = show; PP.app.openSong = openSong; PP.app.handleNote = handleNote; PP.app.startPractice = startPractice;
-  PP.app.onStartTap = onStartTap;
+  PP.app.onStartTap = onStartTap; PP.app.toggleListen = toggleListen; PP.app.stopListen = stopListen;
   document.addEventListener('DOMContentLoaded', init);
 })();

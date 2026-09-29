@@ -9,6 +9,18 @@
  * Also: hints after N wrong tries, adaptive tempo (slow down after too many
  * mistakes, speed up after a streak), loop a range of bars, metronome ticks.
  *
+ * Timing (settings.timing = 'relaxed' | 'normal' | 'strict', see TIMING):
+ *  A right note counts if it comes between `early` before and `late` after the
+ *  note's beat. Each window is given in beats (so it grows with slow songs /
+ *  slow speeds) with a minimum in milliseconds (so fast songs and the
+ *  microphone's small delay are covered too). Early or late notes inside the
+ *  window are simply "right" - there is no early/late scolding.
+ *
+ * Speed: `speed` is the effective multiplier. setManualSpeed(pct) is the
+ *  turtle/rabbit buttons: it sets the speed AND becomes the ceiling for the
+ *  automatic speed-up (auto slow-down can still go below it when things get
+ *  hard, and the streak speed-up climbs back only up to the manual speed).
+ *
  * The engine talks to the UI through `hooks` (all optional):
  *  onTarget(i) onCorrect(i, firstTry) onWrong(i, wrongCount, midi)
  *  onHint(i) onHintClear() onSpeed(pct, 'down'|'up') onBeat(accent)
@@ -18,10 +30,20 @@
   'use strict';
   const PP = root.PP = root.PP || {};
 
+  /** Timing windows. early/late: beats; *Ms: minimum in ms; waitEarly: wait mode.
+   *  Old (before sept 2026) play-along window was 0.4 beat early and
+   *  (note length - 0.4 beat) late, e.g. only 0.1 beat for an eighth note. */
+  const TIMING = {
+    strict:  { early: 0.35, earlyMs: 200, late: 0.5,  lateMs: 300, waitEarly: 0.75, waitEarlyMs: 400 },
+    normal:  { early: 0.6,  earlyMs: 350, late: 0.8,  lateMs: 500, waitEarly: 1.0,  waitEarlyMs: 550 },
+    relaxed: { early: 0.9,  earlyMs: 550, late: 1.25, lateMs: 800, waitEarly: 1.5,  waitEarlyMs: 800 },
+  };
+  const SPEED_MIN = 30, SPEED_MAX = 120, SPEED_STEP = 10;
+
   class Practice {
     constructor(score, settings, hooks) {
       this.score = score; this.settings = settings; this.hooks = hooks || {};
-      this.speed = 1; this.loop = null;
+      this.speed = 1; this.manualSpeed = null; this.loop = null;
       this.reset();
     }
     get events() { return this.score.events; }
@@ -31,7 +53,7 @@
     /** Prepare for a (new) song. */
     load(tempo, time) {
       this.baseTempo = tempo; this.time = time || [4, 4];
-      this.speed = 1; this.loop = null;
+      this.speed = 1; this.manualSpeed = null; this.loop = null;
       this.reset();
     }
     reset() {
@@ -52,6 +74,49 @@
       this.stats = { notes: 0, firstTry: 0, hints: 0, wrong: 0, missed: 0, bestStreak: 0, slowdowns: 0, loops: 0 };
       if (this.score && this.score.clearStates) this.score.clearStates();
     }
+
+    // ------------------------------------------------------------------ timing
+    get timing() { return TIMING[this.settings.timing] || TIMING.relaxed; }
+    _msToBeats(ms) { return ms / 60000 * this.bpm; }
+    /** How many beats before its start a note may be played (play-along). */
+    earlyBeats() { const t = this.timing; return Math.max(t.early, this._msToBeats(t.earlyMs)); }
+    /** How many beats after its start note i still counts (never less than the
+     *  old rule "until just before the note ends", so long notes stay generous). */
+    lateBeats(i) {
+      const t = this.timing, e = this.events[i];
+      return Math.max(t.late, this._msToBeats(t.lateMs), e ? e.beats - 0.25 : 0);
+    }
+    /** Wait mode: how early the next note may be played while the line moves. */
+    waitEarlyBeats(n) {
+      const t = this.timing;
+      return Math.max(t.waitEarly, this._msToBeats(t.waitEarlyMs), this._prevBeats(n) * 0.75);
+    }
+    /** Window sizes in ms at the current speed (for the settings / tests). */
+    windowMs(i) {
+      const b2ms = b => Math.round(b * 60000 / this.bpm);
+      return { early: b2ms(this.earlyBeats()), late: b2ms(this.lateBeats(i === undefined ? -1 : i)) };
+    }
+
+    // ------------------------------------------------------------------ speed
+    /** Turtle / rabbit buttons. pct is clamped to 30..120 (quiet: no onSpeed). */
+    setManualSpeed(pct, quiet) {
+      pct = Math.max(SPEED_MIN, Math.min(SPEED_MAX, Math.round(pct)));
+      this.speed = pct / 100;
+      this.manualSpeed = this.speed;
+      // a fresh start for the automatic speed: no instant slow-down / speed-up
+      this.window = []; this.windowBase = this.wrongCount; this.streak = 0;
+      if (!quiet) this._emit('onSpeed', this.speedPct, 'manual');
+      return this.speedPct;
+    }
+    /** One step slower (-1) or faster (+1), snapping to multiples of 10 %. */
+    stepSpeed(dir) {
+      const pct = this.speedPct;
+      const next = dir > 0 ? Math.floor(pct / SPEED_STEP + 1e-6) * SPEED_STEP + SPEED_STEP
+                           : Math.ceil(pct / SPEED_STEP - 1e-6) * SPEED_STEP - SPEED_STEP;
+      return this.setManualSpeed(next);
+    }
+    /** Highest speed the automatic speed-up may reach. */
+    get speedCeiling() { return this.manualSpeed !== null ? this.manualSpeed : 1; }
 
     // ------------------------------------------------------------------ helpers
     get beatsPerBar() { return this.time[0] * 4 / this.time[1]; }
@@ -144,20 +209,50 @@
 
     _updatePlayAlong() {
       if (this.phase === 'lead' && this.songBeat >= this._startBeat() - 0.4) this._setPhase('moving');
-      const tol = 0.4;
+      const show = 0.4;   // the highlight moves to a note just before its beat
       const r = this._range(), ev = this.events;
-      // current note = last note whose window has opened
+      // Notes whose late window has closed without being played are missed.
+      for (let i = r.a; i <= r.b; i++) {
+        const e = ev[i];
+        if (e.rest || this.done.has(i)) continue;
+        if (e.startBeat - show > this.songBeat) break;
+        if (this.songBeat > e.startBeat + this.lateBeats(i)) this._miss(i);
+      }
+      // current (highlighted) note = last note whose beat has (almost) come
       let cur = -1;
-      for (let i = r.a; i <= r.b; i++) if (!ev[i].rest && ev[i].startBeat - tol <= this.songBeat) cur = i;
+      for (let i = r.a; i <= r.b; i++) if (!ev[i].rest && ev[i].startBeat - show <= this.songBeat) cur = i;
       if (cur !== this.target) {
-        const old = this.target;
-        if (old >= 0 && !this.done.has(old)) this._miss(old);
         if (cur >= 0 && !this.done.has(cur)) this._setTarget(cur); else this.target = cur;
       }
-      if (this.songBeat >= this._endBeat()) {
-        if (this.target >= 0 && !this.done.has(this.target)) this._miss(this.target);
+      // the pass ends when the music has ended AND the last note's window closed
+      let last = -1; for (let i = r.b; i >= r.a; i--) if (!ev[i].rest) { last = i; break; }
+      const end = Math.max(this._endBeat(), last >= 0 ? ev[last].startBeat + this.lateBeats(last) : 0);
+      if (this.songBeat >= end) {
+        for (let i = r.a; i <= r.b; i++) if (!ev[i].rest && !this.done.has(i)) this._miss(i);
         this._finishPass();
       }
+    }
+    /** Play-along: the unfinished note whose timing window contains now and that
+     *  matches `midi` (the earliest one, so repeated notes are taken in order). */
+    _playAlongMatch(midi) {
+      const r = this._range(), ev = this.events, b = this.songBeat, early = this.earlyBeats();
+      for (let i = r.a; i <= r.b; i++) {
+        const e = ev[i];
+        if (e.rest || this.done.has(i)) continue;
+        if (e.startBeat - early > b) break;
+        if (b <= e.startBeat + this.lateBeats(i) && this.matches(midi, i)) return i;
+      }
+      return -1;
+    }
+    /** Was `midi` the right note for a note that just went by? (then: no scolding) */
+    _recentlyPassed(midi) {
+      const r = this._range(), ev = this.events, b = this.songBeat;
+      for (let i = r.a; i <= r.b; i++) {
+        const e = ev[i];
+        if (e.rest || !this.done.has(i) || e.startBeat > b) continue;
+        if (b - e.startBeat <= this.lateBeats(i) * 2 + 1 && this.matches(midi, i)) return true;
+      }
+      return false;
     }
 
     _finishPass() {
@@ -209,14 +304,12 @@
     input(midi) {
       if (this.paused || this.phase === 'idle' || this.phase === 'done') return 'ignored';
       if (this.settings.mode === 'playalong') {
+        // right note inside its (early ... late) window = right, early or late
+        const m = this._playAlongMatch(midi);
+        if (m >= 0) { this._correct(m); return 'correct'; }
         const i = this.target;
-        if (i < 0 || this.done.has(i)) {
-          // between notes: maybe the next note, played a little early
-          const n = this._nextNote(this.songBeat, false);
-          if (n >= 0 && this.events[n].startBeat - this.songBeat < 0.6 && this.matches(midi, n)) { this._correct(n); return 'correct'; }
-          return 'ignored';
-        }
-        if (this.matches(midi, i)) { this._correct(i); return 'correct'; }
+        if (i < 0 || this.done.has(i)) return 'ignored';
+        if (this._recentlyPassed(midi)) return 'ignored';   // a bit too late: no scolding
         this._wrong(i, midi); return 'wrong';
       }
       // wait mode
@@ -230,7 +323,7 @@
       if (n >= 0 && !this.pre.has(n)) {
         const e = this.events[n];
         const away = e.startBeat - this.songBeat;
-        if (away <= Math.max(0.75, this._prevBeats(n) * 0.5) && this.matches(midi, n)) {
+        if (away <= this.waitEarlyBeats(n) && this.matches(midi, n)) {
           this.pre.add(n);
           this.target = n; this.wrongCount = 0;
           this._correct(n);
@@ -242,23 +335,27 @@
     _prevBeats(n) { const ev = this.events; return n > 0 ? ev[n - 1].beats : 1; }
 
     _correct(i) {
-      const firstTry = this.wrongCount === 0;
+      // (play-along: an early/late note can be another note than the highlighted one)
+      const isTarget = i === this.target;
+      const firstTry = !isTarget || this.wrongCount === 0;
       this.done.add(i);
       this.score.setState(i, 'correct');
       this.stats.notes++;
       if (firstTry) this.stats.firstTry++;
-      this.window.push(Math.max(0, this.wrongCount - this.windowBase));
-      this.windowBase = 0;
+      this.window.push(isTarget ? Math.max(0, this.wrongCount - this.windowBase) : 0);
+      if (isTarget) this.windowBase = 0;
       while (this.window.length > this.settings.slowWindow) this.window.shift();
       this.consecMiss = 0;
       if (firstTry) { this.streak++; this.stats.bestStreak = Math.max(this.stats.bestStreak, this.streak); } else this.streak = 0;
       this._emit('onHintClear');
       this.hintShown = false;
       this._emit('onCorrect', i, firstTry);
-      this.wrongCount = 0;
-      // speed back up after a streak of first-try notes
-      if (this.settings.adaptive && this.settings.speedUp && this.speed < 1 && this.streak >= this.settings.speedUpStreak) {
-        this.speed = Math.min(1, Math.round((this.speed + 0.1) * 20) / 20);
+      if (isTarget) this.wrongCount = 0;
+      // speed back up after a streak of first-try notes - but never above the
+      // speed chosen with the turtle/rabbit buttons (or 100 % if none chosen)
+      const cap = this.speedCeiling;
+      if (this.settings.adaptive && this.settings.speedUp && this.speed < cap - 1e-6 && this.streak >= this.settings.speedUpStreak) {
+        this.speed = Math.min(cap, Math.round((this.speed + 0.1) * 20) / 20);
         this.streak = 0;
         this._emit('onSpeed', this.speedPct, 'up');
       }
@@ -281,10 +378,10 @@
       this.stats.notes++;
       this.consecMiss++;
       this.streak = 0;
-      this.window.push(1 + Math.max(0, this.wrongCount - this.windowBase));
-      this.windowBase = 0;
+      const isTarget = i === this.target;
+      this.window.push(1 + (isTarget ? Math.max(0, this.wrongCount - this.windowBase) : 0));
+      if (isTarget) { this.windowBase = 0; this.wrongCount = 0; }
       while (this.window.length > this.settings.slowWindow) this.window.shift();
-      this.wrongCount = 0;
       this._emit('onMiss', i);
       this._checkSlowdown();
     }
@@ -312,4 +409,6 @@
     }
   }
   PP.Practice = Practice;
+  PP.Practice.TIMING = TIMING;
+  PP.Practice.SPEED_MIN = SPEED_MIN; PP.Practice.SPEED_MAX = SPEED_MAX; PP.Practice.SPEED_STEP = SPEED_STEP;
 })(typeof self !== 'undefined' ? self : this);

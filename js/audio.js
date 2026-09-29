@@ -60,6 +60,53 @@
       });
       this._deaf(dur * 1000 + 150);
     },
+    /**
+     * Piano-like note for Listen mode, scheduled at AudioContext time `when`
+     * (seconds) for `dur` seconds. A few slightly stretched partials that fade
+     * at different rates + a closing low-pass give a soft, round piano tone.
+     * Voices are remembered so stopVoices() can silence everything at once.
+     */
+    pianoNote(midi, when, dur, vel) {
+      if (!this.ctx) return;
+      const c = this.ctx, f = 440 * Math.pow(2, (midi - 69) / 12);
+      const t = Math.max(c.currentTime, when || 0), v = (vel || 0.8) * 0.32;
+      dur = Math.max(0.12, dur || 0.5);
+      const ring = Math.max(0.6, Math.min(3.5, 2.6 - (midi - 60) * 0.04)); // low notes ring longer
+      const end = t + dur, stopAt = end + 0.35;
+      const out = c.createGain(), lp = c.createBiquadFilter();
+      lp.type = 'lowpass'; lp.Q.value = 0.4;
+      lp.frequency.setValueAtTime(Math.min(12000, f * 10), t);
+      lp.frequency.setTargetAtTime(Math.min(6000, f * 3.5), t + 0.02, 0.25);
+      out.gain.setValueAtTime(0.0001, t);
+      out.gain.linearRampToValueAtTime(v, t + 0.006);
+      out.gain.setTargetAtTime(v * 0.35, t + 0.01, ring * 0.35);
+      out.gain.setTargetAtTime(0.0001, end, 0.07);                       // key released
+      lp.connect(out); out.connect(this.master);
+      const oscs = [];
+      [[1, 1], [2, 0.5], [3, 0.22], [4, 0.12], [5, 0.06], [6, 0.03]].forEach(([k, a]) => {
+        const o = c.createOscillator(), og = c.createGain();
+        o.type = 'sine';
+        o.frequency.value = f * k * (1 + 0.0004 * k * k);                 // slight string stretch
+        og.gain.setValueAtTime(a, t);
+        og.gain.setTargetAtTime(a * 0.15, t + 0.01, ring / (k * 1.3));    // upper partials fade first
+        o.connect(og); og.connect(lp); o.start(t); o.stop(stopAt);
+        oscs.push(o);
+      });
+      const voice = { oscs, out, stopAt };
+      this.voices = (this.voices || []).filter(x => x.stopAt > c.currentTime);
+      this.voices.push(voice);
+      return voice;
+    },
+    /** Silence every scheduled Listen-mode note (fast fade, no click). */
+    stopVoices() {
+      if (!this.ctx || !this.voices) return;
+      const t = this.ctx.currentTime;
+      this.voices.forEach(vc => {
+        try { vc.out.gain.cancelScheduledValues(t); vc.out.gain.setTargetAtTime(0.0001, t, 0.03); } catch (e) { /* ignore */ }
+        vc.oscs.forEach(o => { try { o.stop(t + 0.2); } catch (e) { /* ignore */ } });
+      });
+      this.voices = [];
+    },
     /** Little two-note "ding" for correct notes (high, short, quiet). */
     chime() {
       if (!this.running) return;

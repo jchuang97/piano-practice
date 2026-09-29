@@ -78,12 +78,26 @@
     /** Walk the abcjs tune structure and build the list of playable events. */
     _extract(prep, opts) {
       const tune = this.tune;
-      const events = [];
       this.lineInfo = [];
-      if (!tune) { this.events = events; return; }
+      this.otherEvents = [];
+      if (!tune) { this.events = []; return; }
       const nStaffs = Math.max(...tune.lines.map(l => (l.staff ? l.staff.length : 0)));
       const staffIdx = opts.hand === 'lh' && nStaffs > 1 ? 1 : 0;
       this.staffIdx = staffIdx; this.nStaffs = nStaffs;
+      const w = this._walk(prep, staffIdx);
+      this.lineInfo = w.lineInfo;
+      const events = w.events;
+      // the other hand (grand staff): timing + pitches only, used by Listen mode
+      if (nStaffs > 1) this.otherEvents = this._walk(prep, 1 - staffIdx).events.filter(e => !e.rest);
+      this.events = events;
+      this.totalBeats = events.length ? events[events.length - 1].startBeat + events[events.length - 1].beats : 0;
+      this.barCount = events.length ? events[events.length - 1].bar + 1 : 0;
+      if (this.states.length !== events.length) this.states = new Array(events.length).fill(null);
+    }
+
+    /** Events of one staff (0 = top / right hand, 1 = bottom / left hand). */
+    _walk(prep, staffIdx) {
+      const tune = this.tune, events = [], lineInfo = [];
       let beat = 0, bar = 0, barHasNotes = false, tripletMult = 1, tripletLeft = 0;
       tune.lines.forEach((line, li) => {
         if (!line.staff) return;
@@ -92,7 +106,7 @@
         ((st.key && st.key.accidentals) || []).forEach(a => { keyAcc[a.note.toUpperCase()] = ACC_MAP[a.acc] || 0; });
         let barAcc = {};
         const info = { line: li, bars: [] };
-        this.lineInfo.push(info);
+        lineInfo.push(info);
         const voice = st.voices[0] || [];
         for (const el of voice) {
           if (el.el_type === 'bar') {
@@ -151,10 +165,7 @@
           });
         }
       }
-      this.events = events;
-      this.totalBeats = events.length ? events[events.length - 1].startBeat + events[events.length - 1].beats : 0;
-      this.barCount = events.length ? events[events.length - 1].bar + 1 : 0;
-      if (this.states.length !== events.length) this.states = new Array(events.length).fill(null);
+      return { events, lineInfo };
     }
 
     /** Screen positions (relative to the wrap's scrolling content). */

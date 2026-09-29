@@ -89,6 +89,16 @@
       k.appendChild(b); this._finger = b;
     }
     clearFinger() { if (this._finger) this._finger.remove(); this._finger = null; }
+    /** Listen mode: keep a key lit (class cls) until lightOff. exactOnly: only
+     *  if that exact key (same octave) is on the keyboard. Returns the key. */
+    lightOn(midi, cls, exactOnly) {
+      const k = exactOnly ? this.keys[midi] : this.keyFor(midi, true); if (!k) return null;
+      k.classList.add(cls); return k;
+    }
+    lightOff(midi, cls) {
+      const k = this.keyFor(midi, true); if (k) k.classList.remove(cls);
+      if (this.keys[midi]) this.keys[midi].classList.remove(cls);
+    }
     hint(midi) {
       this.clearHint();
       const k = this.keyFor(midi, true); if (k) { k.classList.add('hint'); this._hint = k; }
