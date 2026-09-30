@@ -119,6 +119,20 @@ button { touch-action: manipulation; cursor: pointer; }
 @keyframes cdRing { 0% { transform: scale(.9); opacity: .7; } 100% { transform: scale(1.25); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .cd-bubble, .cd-go i, .cd-bubble::after { animation: none; } }
 
+/* retry message ("Let's try that part again, a little slower!") */
+.cd-message { background: #fff; border: 4px solid #ffc2dd; border-radius: 28px; padding: 20px 34px 22px; text-align: center; box-shadow: 0 14px 40px rgba(109,74,255,.25); animation: cdmIn .45s cubic-bezier(.2,1.4,.4,1) both; max-width: calc(100% - 40px); }
+.cdm-emoji { font-size: 64px; line-height: 1; animation: cdmWalk 1.2s ease-in-out infinite; }
+.cdm-title { font-size: clamp(24px, 3.6vw, 36px); font-weight: 900; color: var(--brand); margin-top: 6px; line-height: 1.2; }
+.cdm-sub { font-size: 18px; font-weight: 700; color: var(--muted); margin-top: 8px; }
+@keyframes cdmIn { 0% { transform: scale(.6); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes cdmWalk { 0%,100% { transform: translateX(-6px) rotate(-4deg); } 50% { transform: translateX(6px) rotate(4deg); } }
+/* per-part stars */
+.stars-badge { display: inline-flex; align-items: center; gap: 1px; background: #fff8dc; color: #9a6700; }
+.stars-badge .part { font-size: 12px; margin-right: 5px; }
+.stars-badge .st { font-style: normal; font-size: 16px; line-height: 1; color: #e5dcc0; }
+.stars-badge .st.on { color: #f5b301; text-shadow: 0 0 4px rgba(245,179,1,.5); }
+.stars-badge .st.miss { color: #f3c6dc; }
+
 /* 👂 Listen + 🐢/🐰 speed */
 .ctrl.listen-btn { background: linear-gradient(135deg, #ffe3f1, #f3e8ff); color: #9d174d; box-shadow: var(--shadow), inset 0 0 0 2px #ffc2dd; }
 .ctrl.listen-btn.on { background: var(--brand2); color: #fff; box-shadow: var(--shadow); }

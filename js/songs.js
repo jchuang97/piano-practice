@@ -72,7 +72,11 @@ K:C
 
   const DEFAULT_SETTINGS = {
     nameStyle: 'solfege',     // 'solfege' (Do Re Mi) or 'letters' (C D E)
-    mode: 'wait',             // 'wait' or 'playalong'
+    schema: 2,                // settings version (2: play-along became the default)
+    mode: 'playalong',        // 'playalong' (line keeps moving, parts are replayed) or 'wait'
+    missLimit: 4,             // play-along: replay the part after this many missed notes
+    sectionRetries: 3,        // ... at most this many times, then move on with praise
+    waitSkip: 8,              // wait mode: skip a note after this many seconds of silence (0 = never)
     input: 'auto',            // 'auto' | 'mic' | 'midi' | 'screen'
     anyOctave: true,          // accept the right note name in any octave
     namesInHeads: false,      // note names inside note heads
@@ -137,7 +141,17 @@ K:C
       this.saveSongs(songs);
     },
     newId() { return 'song-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6); },
-    getSettings() { return Object.assign({}, DEFAULT_SETTINGS, load(SETTINGS_KEY, {})); },
+    getSettings() {
+      const saved = load(SETTINGS_KEY, {});
+      // v2 (sept 2026): play-along is the new default. Settings saved by older
+      // versions stored mode 'wait' only because it was the default then.
+      if (!(saved.schema >= 2) && Object.keys(saved).length) {
+        if (saved.mode === 'wait') saved.mode = 'playalong';
+        saved.schema = 2;
+        save(SETTINGS_KEY, saved);
+      }
+      return Object.assign({}, DEFAULT_SETTINGS, saved);
+    },
     saveSettings(s) { return save(SETTINGS_KEY, s); },
     /** Speed (percent) picked with the turtle/rabbit buttons for a song, or null. */
     getSongSpeed(id) { const v = load(SPEEDS_KEY, {})[id]; return typeof v === 'number' && v >= 10 && v <= 200 ? v : null; },

@@ -205,7 +205,9 @@
       return this._micP;
     },
     async _startMic() {
-      this.setSession('auto');           // let iOS pick play-and-record for the mic
+      // Never capture while the session is 'playback' (set for Listen): iOS ends
+      // or silences a microphone track unless the type is play-and-record/auto.
+      this.setSession('play-and-record');
       const gen = this._micGen = (this._micGen || 0) + 1;
       if (!root.isSecureContext) throw Object.assign(new Error('insecure'), { code: 'insecure' });
       if (!this.micSupported()) throw Object.assign(new Error('unsupported'), { code: 'unsupported' });

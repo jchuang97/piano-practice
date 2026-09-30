@@ -16,6 +16,21 @@
  *  microphone's small delay are covered too). Early or late notes inside the
  *  window are simply "right" - there is no early/late scolding.
  *
+ * Sections (play-along): the song is cut into short parts of whole bars
+ *  (about 6 notes, see _buildSections). Missed notes are counted per part.
+ *  After settings.missLimit (default 4) misses in the current part, or when a
+ *  part ends with less than half of its notes right, the engine rewinds to the
+ *  start of that part, one speed step (10 %) slower (never under 30 %), pauses
+ *  and emits onSectionRetry; the app shows a kind message + short countdown
+ *  and resumes. After settings.sectionRetries (3) retries of the same part it
+ *  moves on anyway (onSectionMoveOn). A part with at most 1 miss speeds up one
+ *  step again, never above speedCeiling. (The mistake-window slow-down and the
+ *  streak speed-up below are used in wait mode only.)
+ *
+ * Wait mode escape: after settings.waitSkip seconds (default 8) with no sound
+ *  heard (activity() / input()), the hint is shown halfway and then the note
+ *  is skipped gently (onSkip), so the line never stays frozen.
+ *
  * Speed: `speed` is the effective multiplier. setManualSpeed(pct) is the
  *  turtle/rabbit buttons: it sets the speed AND becomes the ceiling for the
  *  automatic speed-up (auto slow-down can still go below it when things get
@@ -24,7 +39,8 @@
  * The engine talks to the UI through `hooks` (all optional):
  *  onTarget(i) onCorrect(i, firstTry) onWrong(i, wrongCount, midi)
  *  onHint(i) onHintClear() onSpeed(pct, 'down'|'up') onBeat(accent)
- *  onMiss(i) onLoop() onDone(stats) onPhase(phase)
+ *  onMiss(i) onLoop() onDone(stats) onPhase(phase) onSkip(i)
+ *  onSectionRetry(k, {pct, retry, max}) onSectionPass(k, {hits, n, retried}) onSectionMoveOn(k)
  */
 (function (root) {
   'use strict';
@@ -39,6 +55,8 @@
     relaxed: { early: 0.9,  earlyMs: 550, late: 1.25, lateMs: 800, waitEarly: 1.5,  waitEarlyMs: 800 },
   };
   const SPEED_MIN = 30, SPEED_MAX = 120, SPEED_STEP = 10;
+  const SECTION_MIN_NOTES = 5;   // a part = whole bars, until it has >= 5 notes (~6)
+  const SECTION_MAX_BARS = 4;
 
   class Practice {
     constructor(score, settings, hooks) {
@@ -71,7 +89,9 @@
       this.pre = new Set();          // notes played slightly early (wait mode)
       this.target = -1;
       this.lastTick = null;
-      this.stats = { notes: 0, firstTry: 0, hints: 0, wrong: 0, missed: 0, bestStreak: 0, slowdowns: 0, loops: 0 };
+      this.stats = { notes: 0, firstTry: 0, hints: 0, wrong: 0, missed: 0, bestStreak: 0, slowdowns: 0, loops: 0, retries: 0, skipped: 0 };
+      this.sections = []; this.secOf = new Map(); this.secStats = [];
+      this.waitStart = 0; this.lastActivity = 0; this._rewound = false;
       if (this.score && this.score.clearStates) this.score.clearStates();
     }
 
@@ -117,6 +137,127 @@
     }
     /** Highest speed the automatic speed-up may reach. */
     get speedCeiling() { return this.manualSpeed !== null ? this.manualSpeed : 1; }
+    _snapStep(dir) {
+      const pct = this.speedPct;
+      return dir > 0 ? Math.floor(pct / SPEED_STEP + 1e-6) * SPEED_STEP + SPEED_STEP
+                     : Math.ceil(pct / SPEED_STEP - 1e-6) * SPEED_STEP - SPEED_STEP;
+    }
+
+    // ------------------------------------------------------------------ sections
+    /** Parts of whole bars with about 6 notes each (Lazy Song: 2 bars = 6 notes). */
+    _buildSections() {
+      const r = this._range(), ev = this.events, out = [];
+      if (!ev.length) return out;
+      const bars = [];
+      for (let i = r.a; i <= r.b; i++) {
+        if (!bars.length || bars[bars.length - 1].bar !== ev[i].bar) bars.push({ bar: ev[i].bar, idx: [] });
+        bars[bars.length - 1].idx.push(i);
+      }
+      const count = (idx) => idx.filter(i => !ev[i].rest).length;
+      let cur = null;
+      for (const b of bars) {
+        if (!cur) cur = { idx: [], bars: 0 };
+        cur.idx.push(...b.idx); cur.bars++;
+        if (count(cur.idx) >= SECTION_MIN_NOTES || cur.bars >= SECTION_MAX_BARS) { out.push(cur); cur = null; }
+      }
+      if (cur) { if (out.length && count(cur.idx) < 3) out[out.length - 1].idx.push(...cur.idx); else out.push(cur); }
+      return out.map(sc => {
+        const notes = sc.idx.filter(i => !ev[i].rest);
+        return { a: sc.idx[0], b: sc.idx[sc.idx.length - 1], notes, startBeat: ev[sc.idx[0]].startBeat };
+      }).filter(sc => sc.notes.length);
+    }
+    _initSections() {
+      this.sections = this._buildSections();
+      this.secOf = new Map();
+      this.sections.forEach((sc, k) => sc.notes.forEach(i => this.secOf.set(i, k)));
+      this.secStats = this.sections.map(() => ({ hits: 0, misses: 0, retries: 0, evaluated: false, gaveUp: false }));
+    }
+    get sectionsOn() { return this.settings.mode === 'playalong' && this.sections.length > 0; }
+    /** Index of the part the line is in (or -1). */
+    currentSection() {
+      if (!this.sections.length) return -1;
+      if (this.target >= 0 && this.secOf.has(this.target)) return this.secOf.get(this.target);
+      let k = 0;
+      this.sections.forEach((sc, j) => { if (sc.startBeat <= this.songBeat + 1e-9) k = j; });
+      return k;
+    }
+    _sectionNote(i, hit) {
+      if (!this.sectionsOn || !this.secOf.has(i)) return;
+      const k = this.secOf.get(i), st = this.secStats[k];
+      if (hit) st.hits++; else st.misses++;
+      const max = this.settings.sectionRetries === undefined ? 3 : this.settings.sectionRetries;
+      const limit = this.settings.missLimit || 4;
+      if (!hit && !st.gaveUp && st.misses >= limit) {
+        if (st.retries < max) { this._retrySection(k); return; }
+        st.gaveUp = true;                     // tried enough: keep going, with praise
+        this._emit('onSectionMoveOn', k);
+      }
+      this._evalSection(k);
+    }
+    /** When every note of part k is decided: pass (>= half right), retry, or move on. */
+    _evalSection(k) {
+      const sc = this.sections[k], st = this.secStats[k];
+      if (!sc || st.evaluated || !sc.notes.every(i => this.done.has(i))) return;
+      st.evaluated = true;
+      const n = sc.notes.length, max = this.settings.sectionRetries === undefined ? 3 : this.settings.sectionRetries;
+      if (st.hits * 2 >= n) {
+        this._emit('onSectionPass', k, { hits: st.hits, n, retried: st.retries > 0 });
+        // a good part: one step faster again, but never above the chosen speed
+        const cap = this.speedCeiling;
+        if (st.misses <= 1 && this.speed < cap - 1e-6) {
+          this.speed = Math.min(cap, this._snapStep(+1) / 100);
+          this._emit('onSpeed', this.speedPct, 'up');
+        }
+      } else if (!st.gaveUp && st.retries < max) {
+        this._retrySection(k);
+      } else if (!st.gaveUp) {
+        st.gaveUp = true;
+        this._emit('onSectionMoveOn', k);
+      }
+    }
+    /** Go back to the start of part k, one step slower, and wait (paused) for the app. */
+    _retrySection(k) {
+      const sc = this.sections[k], st = this.secStats[k], r = this._range();
+      const max = this.settings.sectionRetries === undefined ? 3 : this.settings.sectionRetries;
+      st.retries++; this.stats.retries++;
+      for (let i = sc.a; i <= r.b; i++) { this.done.delete(i); this.pre.delete(i); this.score.setState(i, null); }
+      for (let j = k; j < this.sections.length; j++) Object.assign(this.secStats[j], { hits: 0, misses: 0, evaluated: false, gaveUp: false });
+      this.target = -1; this.wrongCount = 0; this.consecMiss = 0; this.streak = 0;
+      this.window = []; this.windowBase = 0;
+      this.speed = Math.max(SPEED_MIN, this._snapStep(-1)) / 100;
+      this.stats.slowdowns++;
+      this.songBeat = sc.startBeat - 1;       // one beat of lead-in before the part
+      if (k === 0) this.leadStart = this.songBeat;
+      this._rewound = true;
+      this._setPhase('lead');
+      this.paused = true;
+      this.score.hideRing();
+      this._emit('onHintClear');
+      this._drawCursor();
+      this._emit('onSectionRetry', k, { pct: this.speedPct, retry: st.retries, max });
+    }
+
+    // ------------------------------------------------------------------ wait-mode escape
+    /** The app heard some sound (a note being played, even if not recognised). */
+    activity() { this.lastActivity = this.lastNow || 0; }
+    _waitEscape(now) {
+      const secs = +this.settings.waitSkip;
+      if (!(secs > 0) || this.target < 0) return;
+      const quiet = now - this.lastActivity, total = now - this.waitStart;
+      const hintAt = secs >= 5 ? Math.max(2500, secs * 500) : secs * 500;   // the hint shows halfway
+      if (!this.hintShown && quiet >= hintAt) this._showHint(this.target);
+      if (quiet >= secs * 1000 || total >= secs * 2500) this._skip(this.target);
+    }
+    /** Wait mode: move on gently from a note nobody (or no microphone) played. */
+    _skip(i) {
+      this.done.add(i);
+      this.score.setState(i, 'missed');
+      this.stats.skipped++; this.stats.notes++;
+      this.streak = 0; this.wrongCount = 0; this.hintShown = false;
+      this._emit('onHintClear');
+      this._emit('onSkip', i);
+      this._setPhase('moving');
+    }
 
     // ------------------------------------------------------------------ helpers
     get beatsPerBar() { return this.time[0] * 4 / this.time[1]; }
@@ -159,11 +300,12 @@
       this.leadStart = this._startBeat() - lead;
       this.songBeat = this.leadStart;
       this.lastNow = now;
+      this._initSections();
       this._setPhase('lead');
       this.score.setCursor(-1, 0);
     }
     pause() { this.paused = true; }
-    resume(now) { this.paused = false; this.lastNow = now; }
+    resume(now) { this.paused = false; this.lastNow = now; this.waitStart = this.lastActivity = now; }
     setLoop(from, to) {
       this.loop = from && to && to >= from ? { from, to } : null;
     }
@@ -173,7 +315,7 @@
       if (this.phase === 'idle' || this.phase === 'done' || this.paused) { this.lastNow = now; return; }
       const dt = Math.min(100, Math.max(0, now - (this.lastNow === null ? now : this.lastNow)));
       this.lastNow = now;
-      if (this.phase === 'waiting') { this._drawCursor(); return; }
+      if (this.phase === 'waiting') { this._waitEscape(now); this._drawCursor(); return; }
       const prevBeat = this.songBeat;
       this.songBeat += dt / 60000 * this.bpm;
       this._ticks(prevBeat, this.songBeat);
@@ -203,6 +345,7 @@
         if (this.pre.has(i)) { this.pre.delete(i); continue; } // already played early
         this.songBeat = e.startBeat;
         this._setTarget(i);
+        this.waitStart = this.lastActivity = this.lastNow || 0;
         this._setPhase('waiting');
         return;
       }
@@ -213,12 +356,13 @@
       if (this.phase === 'lead' && this.songBeat >= this._startBeat() - 0.4) this._setPhase('moving');
       const show = 0.4;   // the highlight moves to a note just before its beat
       const r = this._range(), ev = this.events;
+      this._rewound = false;
       // Notes whose late window has closed without being played are missed.
       for (let i = r.a; i <= r.b; i++) {
         const e = ev[i];
         if (e.rest || this.done.has(i)) continue;
         if (e.startBeat - show > this.songBeat) break;
-        if (this.songBeat > e.startBeat + this.lateBeats(i)) this._miss(i);
+        if (this.songBeat > e.startBeat + this.lateBeats(i)) { this._miss(i); if (this._rewound) return; }
       }
       // current (highlighted) note = last note whose beat has (almost) come
       let cur = -1;
@@ -230,7 +374,9 @@
       let last = -1; for (let i = r.b; i >= r.a; i--) if (!ev[i].rest) { last = i; break; }
       const end = Math.max(this._endBeat(), last >= 0 ? ev[last].startBeat + this.lateBeats(last) : 0);
       if (this.songBeat >= end) {
-        for (let i = r.a; i <= r.b; i++) if (!ev[i].rest && !this.done.has(i)) this._miss(i);
+        for (let i = r.a; i <= r.b; i++) if (!ev[i].rest && !this.done.has(i)) { this._miss(i); if (this._rewound) return; }
+        this.sections.forEach((sc, k) => { if (!this._rewound) this._evalSection(k); });
+        if (this._rewound) return;            // the last part is played again
         this._finishPass();
       }
     }
@@ -262,6 +408,7 @@
         const r = this._range();
         for (let i = r.a; i <= r.b; i++) { this.done.delete(i); this.score.setState(i, null); }
         this.pre.clear();
+        this.secStats.forEach(st => Object.assign(st, { hits: 0, misses: 0, retries: 0, evaluated: false, gaveUp: false }));
         this.stats.loops++;
         this.target = -1;
         this.songBeat = this._startBeat() - 1;
@@ -305,6 +452,7 @@
     /** A key was played (mic, MIDI or on-screen). */
     input(midi) {
       if (this.paused || this.phase === 'idle' || this.phase === 'done') return 'ignored';
+      this.activity();
       if (this.settings.mode === 'playalong') {
         // right note inside its (early ... late) window = right, early or late
         const m = this._playAlongMatch(midi);
@@ -353,10 +501,11 @@
       this.hintShown = false;
       this._emit('onCorrect', i, firstTry);
       if (isTarget) this.wrongCount = 0;
+      this._sectionNote(i, true);
       // speed back up after a streak of first-try notes - but never above the
       // speed chosen with the turtle/rabbit buttons (or 100 % if none chosen)
       const cap = this.speedCeiling;
-      if (this.settings.adaptive && this.settings.speedUp && this.speed < cap - 1e-6 && this.streak >= this.settings.speedUpStreak) {
+      if (!this.sectionsOn && this.settings.adaptive && this.settings.speedUp && this.speed < cap - 1e-6 && this.streak >= this.settings.speedUpStreak) {
         this.speed = Math.min(cap, Math.round((this.speed + 0.1) * 20) / 20);
         this.streak = 0;
         this._emit('onSpeed', this.speedPct, 'up');
@@ -370,7 +519,7 @@
       this.score.flashWrong(i);
       this._emit('onWrong', i, this.wrongCount, midi);
       if (this.wrongCount >= this.settings.hintAfter && !this.hintShown) this._showHint(i);
-      this._checkSlowdown();
+      if (!this.sectionsOn) this._checkSlowdown();   // (play-along: parts are replayed instead)
     }
 
     _miss(i) {
@@ -385,7 +534,7 @@
       if (isTarget) { this.windowBase = 0; this.wrongCount = 0; }
       while (this.window.length > this.settings.slowWindow) this.window.shift();
       this._emit('onMiss', i);
-      this._checkSlowdown();
+      if (this.sectionsOn) this._sectionNote(i, false); else this._checkSlowdown();
     }
 
     _showHint(i) {
@@ -397,7 +546,7 @@
     /** More than M mistakes in the last K notes => slow down (not below the floor). */
     _checkSlowdown() {
       const s = this.settings;
-      if (!s.adaptive) return;
+      if (!s.adaptive || this.sectionsOn) return;   // play-along uses the part retries instead
       const current = Math.max(0, this.wrongCount - this.windowBase);
       const recent = this.window.slice(-(s.slowWindow - 1)).reduce((a, b) => a + b, 0) + current;
       const floor = s.slowFloor / 100;

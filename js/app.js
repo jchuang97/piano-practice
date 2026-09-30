@@ -119,7 +119,7 @@
     else if (S().input === 'screen') parts.push('The app will listen to the on-screen keys only (change this in ⚙️).');
     else parts.push('When you tap Start, allow the <b>microphone</b> so the app can hear the piano.');
     if (S().mode === 'wait') parts.push('The pink line waits at each note until you play it.');
-    else parts.push('Play along: the line keeps moving, try to play each note on time.');
+    else parts.push('Play along: the line keeps moving. If a part is tricky, we play it again a little slower.');
     return parts.join('<br>');
   }
 
@@ -180,9 +180,11 @@
   }
 
   async function startMic() {
+    app.micStartedAt = performance.now();
     try {
       const r = await audio.startMic();
       if (r === 'cancelled') { updateBadges(); return; }    // Listen was tapped meanwhile
+      app.micStartedAt = performance.now();
       app.input = 'mic';
       app.micPaused = false;
       app.tracker.reset();
@@ -231,6 +233,7 @@
     app.engine.setLoop(loopOn ? +$('loopFrom').value : null, loopOn ? +$('loopTo').value : null);
     app.engine.reset();                       // (stops an old run; nothing is scored during the countdown)
     app.score.setCursor(-1, 0);
+    renderStars();
     runCountdown(() => {
       // after 3-2-1 the line starts right away (one beat of lead-in, also in play-along)
       app.engine.start(performance.now(), S().countdown ? 1 : 0);
@@ -262,29 +265,34 @@
   // Big numbers, one per second (3, 2, 1, then "Go! ⭐"), with an optional soft
   // "tok". Practice (and scoring) only starts at Go. Stop / Home / Listen cancel it.
   const COUNT_MS = 1000;
-  function runCountdown(onGo, resume) {
+  /** opt: { message (html card shown first), messageMs, stepMs (shorter count) } */
+  function runCountdown(onGo, resume, opt) {
+    opt = opt || {};
     cancelCountdown();
-    if (!S().countdown) { onGo(); return; }
+    const numbers = !!S().countdown;
+    if (!numbers && !opt.message) { onGo(); return; }
     const el = $('countdown');
     const c = app.counting = { timers: [], resume: !!resume };
+    app.countdownTimers = c.timers;
+    const step = opt.stepMs || COUNT_MS;
     const showStep = (n) => {
       el.hidden = false;
-      el.innerHTML = n > 0 ? `<div class="cd-bubble cd-${n}"><span>${n}</span></div>`
+      el.innerHTML = n > 0 ? `<div class="cd-bubble cd-${n}" style="animation-duration:${step}ms"><span>${n}</span></div>`
                            : `<div class="cd-bubble cd-go"><span>Go!</span><i>⭐</i></div>`;
       if (S().countdownSound) audio.countTick(n === 0);
       if (app.tracker) app.tracker.reset();
     };
-    app.countdownTimers = c.timers;
-    showStep(3);
-    [2, 1].forEach((n, k) => c.timers.push(setTimeout(() => showStep(n), (k + 1) * COUNT_MS)));
-    c.timers.push(setTimeout(() => {
-      showStep(0);
+    const at = (ms, fn) => { if (ms <= 0) fn(); else c.timers.push(setTimeout(fn, ms)); };
+    let t = 0;
+    if (opt.message) { el.hidden = false; el.innerHTML = `<div class="cd-message">${opt.message}</div>`; t = opt.messageMs || 2200; }
+    if (numbers) { [3, 2, 1].forEach((n, k) => at(t + k * step, () => showStep(n))); t += 3 * step; }
+    at(t, () => {
+      if (numbers) showStep(0); else el.hidden = true;
       app.counting = null;                    // practice starts now
       onGo();
       setPlayButton();
-      c.timers.push(setTimeout(() => { if (!app.counting) el.hidden = true; }, 700));
-    }, 3 * COUNT_MS));
-    app.countdownTimers = c.timers;
+      if (numbers) c.timers.push(setTimeout(() => { if (!app.counting) el.hidden = true; }, 700));
+    });
   }
   function cancelCountdown() {
     if (app.countdownTimers) app.countdownTimers.forEach(clearTimeout);
@@ -388,7 +396,11 @@
   const PRAISE = ['Great! ⭐', 'Yay! 🎉', 'Super! 🌟', 'Well done! 👏', 'Nice! 😊', 'You got it! 💜', 'Wonderful! 🌈'];
   const GENTLE = ['Oops! Try again 🙂', 'Almost! 🙂', 'Try another key 🎹', 'Keep going! 💪'];
   let bubbleTimer = null;
-  function bubble(text, kind, ms) {
+  function bubble(text, kind, ms, hold) {
+    // (hold: an important kind message - e.g. "let's keep going" - is not covered by small ones)
+    const now = performance.now();
+    if (!hold && now < (app.bubbleHold || 0)) return;
+    app.bubbleHold = hold ? now + (ms || 1300) : 0;
     const b = $('bubble');
     b.textContent = text;
     b.className = 'bubble show ' + (kind || '');
@@ -429,13 +441,28 @@
   }
   function fingerWords(e) { return e.finger && S().showFingers ? `Use finger ${e.finger} (${M.FINGER_NAMES[e.finger]}) on ` : 'Find '; }
 
+  // ---- per-part progress: one little star per note of the current part ----
+  function renderStars() {
+    const el = $('sectionStars'), e = app.engine;
+    if (!e || !e.sectionsOn || e.phase === 'idle' || e.phase === 'done') { el.hidden = true; return; }
+    const k = e.currentSection();
+    const sc = e.sections[k];
+    if (!sc) { el.hidden = true; return; }
+    el.innerHTML = `<span class="part">Part ${k + 1}/${e.sections.length}</span>` + sc.notes.map(i => {
+      const st = app.score.states[i];
+      return st === 'correct' ? '<i class="st on">★</i>' : st === 'missed' ? '<i class="st miss">★</i>' : '<i class="st">☆</i>';
+    }).join('');
+    el.hidden = false;
+  }
+
   const hooks = {
-    onTarget(i) { showFinger(i); },
+    onTarget(i) { showFinger(i); renderStars(); },
     onCorrect(i, firstTry) {
       if (S().mode === 'wait') hideFinger();
       if (S().successSound) audio.chime();
       const e = app.score.events[i];
       app.kb.flash(e.midis[0], 'good', 450);
+      renderStars();
       const n = app.engine.stats.notes;
       if (!firstTry) bubble('You found it! 🎉', 'good');
       else if (n % 3 === 0) bubble(PRAISE[Math.floor(Math.random() * PRAISE.length)], 'good');
@@ -455,11 +482,24 @@
       updateBadges();
       if (dir === 'manual') { if (app.screen === 'practice' && !app.listening) bubble(`${pct < 100 ? '🐢' : pct > 100 ? '🐰' : '🎵'} ${pct}%`, 'good', 900); }
       else if (dir === 'down') bubble("Let's slow down a little! 🐢", 'slow', 2200);
+      else if (app.counting) { /* (quiet while a message/countdown shows) */ }
       else bubble("You're doing great — a bit faster! 🚀", 'good', 2200);
     },
     onBeat(accent) { audio.click(accent); },
     onLoop() { bubble('Again! 🔁', 'good', 1000); },
-    onPhase() { setPlayButton(); },
+    onPhase() { setPlayButton(); renderStars(); },
+    onMiss() { renderStars(); },
+    onSkip() { renderStars(); hideFinger(); bubble("Let's keep going! 🎵", 'good', 1600, true); },
+    // play-along parts: never harsh - a kind message, one step slower, a short 3-2-1
+    onSectionRetry(k, info) {
+      updateBadges(); renderStars(); hideFinger();
+      $('bubble').classList.remove('show'); app.bubbleHold = 0;
+      const msg = `<div class="cdm-emoji">🐢</div><div class="cdm-title">Let's try that part again,<br>a little slower!</div>` +
+        `<div class="cdm-sub">Speed ${info.pct}% · you can do it 💜</div>`;
+      runCountdown(() => { app.engine.resume(performance.now()); setPlayButton(); }, true, { message: msg, messageMs: 2200, stepMs: 700 });
+    },
+    onSectionPass(k, info) { renderStars(); if (info.retried) bubble('You did it! 🎉', 'good', 1800, true); },
+    onSectionMoveOn() { renderStars(); bubble("Great trying! Let's keep going 🌟", 'good', 2400, true); },
     onDone(stats) { hideFinger(); setTimeout(() => showEnd(stats), 500); },
   };
 
@@ -530,15 +570,39 @@
         if (app.tracker.current !== null && app.tracker.current !== undefined) {
           $('hearText').textContent = M.noteName(app.tracker.current, S().nameStyle, { octave: true });
           app.heardUntil = now + 600;
+          app.engine.activity();                 // wait mode: she is playing, don't skip
         }
         if (midi !== null) handleNote(midi, 'mic');
       }
+      micWatch(now, buf, level);
     }
     if (app.heardUntil && now > app.heardUntil) { $('hearText').textContent = '–'; app.heardUntil = 0; }
     audio.checkClock(now);
     if (app.engine) app.engine.update(now);
     if (app.listener && app.listener.active) app.listener.update(now);
     requestAnimationFrame(loop);
+  }
+
+  /**
+   * Microphone health: on iOS the mic can stop delivering sound without any
+   * error (the AudioContext got suspended/interrupted when the audio session
+   * switched, or the track went silent). A frozen analyser (identical samples)
+   * for 1.5 s, or pure digital silence for 4 s, while practising => resume the
+   * AudioContext and restart the microphone (at most every 15 s).
+   */
+  function micWatch(now, buf, level) {
+    const w = app.micWatchState || (app.micWatchState = { sig: null, frozenSince: 0, zeroSince: 0, lastFix: -1e9 });
+    let sig = 0; for (let i = 0; i < buf.length; i += 61) sig += buf[i] * (i + 1);
+    if (sig === w.sig) w.frozenSince = w.frozenSince || now; else w.frozenSince = 0;
+    w.sig = sig;
+    if (level === 0) w.zeroSince = w.zeroSince || now; else w.zeroSince = 0;
+    const bad = (w.frozenSince && now - w.frozenSince > 1500) || (w.zeroSince && now - w.zeroSince > 4000);
+    if (!bad || app.screen !== 'practice' || app.listening || now - w.lastFix < 15000) return;
+    w.lastFix = now; w.frozenSince = 0; w.zeroSince = 0;
+    app.micFixes = (app.micFixes || 0) + 1;
+    try { const p = audio.ctx.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* ignore */ }
+    audio.stopMic();
+    startMic().then(() => { if (audio.micOn) toast('🎤 Listening again'); });
   }
 
   // ------------------------------------------------------------------ settings form
@@ -552,7 +616,10 @@
       { key: 'hand', label: 'Hand to practise', help: 'Only for songs with two staves (LH: line)', type: 'select', options: [['rh', 'Right hand (top)'], ['lh', 'Left hand (bottom)']] },
     ] },
     { group: '🎮 Practice', rows: [
-      { key: 'mode', label: 'Mode', type: 'select', options: [['wait', '✋ Wait for me'], ['playalong', '🎵 Play along']] },
+      { key: 'mode', label: 'Mode', help: 'Play along: the line keeps moving and hard parts are played again, slower. Wait for me: the line stops at each note.', type: 'select', options: [['playalong', '🎵 Play along'], ['wait', '✋ Wait for me']] },
+      { key: 'missLimit', label: 'Play along: play a part again after … missed notes', type: 'number', min: 1, max: 10 },
+      { key: 'sectionRetries', label: '… at most … times, then move on', type: 'number', min: 0, max: 5 },
+      { key: 'waitSkip', label: 'Wait for me: move on after … seconds of silence', help: '0 = never. The hint shows halfway.', type: 'number', min: 0, max: 30 },
       { key: 'timing', label: 'Timing', help: 'How early or late a right note may come and still count. Relaxed is best for little ones.', type: 'select', options: [['relaxed', '😌 Relaxed (most forgiving)'], ['normal', 'Normal'], ['strict', 'Strict']] },
       { key: 'anyOctave', label: 'Accept the right note in any octave', help: 'Recommended with a microphone. Sharps/flats are always checked exactly.', type: 'check' },
       { key: 'hintAfter', label: 'Show a hint after … wrong notes', type: 'number', min: 1, max: 10 },
@@ -647,9 +714,21 @@
 <ol>
   <li>Put the tablet on the piano's music stand, close to the piano, and pick a song.</li>
   <li>Tap <b>▶ Start</b> and allow the <b>microphone</b>. The meter next to 🎤 moves when the app hears sound, and “I hear” shows the note.</li>
-  <li>The pink line walks over the music and <b>waits</b> at each purple note until it is played (✋ Wait mode). Right notes turn green. In 🎵 Play-along mode the line keeps going and she plays along.</li>
-  <li>After ${S().hintAfter} wrong notes a key on the screen keyboard glows and a hint appears. If many notes are hard, the song slows down by itself.</li>
+  <li>The pink line walks over the music at the chosen speed and she plays along (🎵 <b>Play along</b>, the default). Right notes turn green. In ✋ <b>Wait for me</b> mode the line waits at each purple note until it is played.</li>
+  <li>After ${S().hintAfter} wrong notes a key on the screen keyboard glows and a hint appears.</li>
 </ol>
+<h2>🎵 Play along: little parts, played again if needed</h2>
+<p>The song is split into little <b>parts</b> of whole bars, about 6 notes each (Lazy Song: 2 bars = 6 notes). The stars at the top (<b>Part 1/2 ☆☆☆☆☆☆</b>) fill with a gold ★ for every right note of the part.</p>
+<ul>
+  <li>The line <b>never stops by itself</b>: if she doesn't play, it keeps moving.</li>
+  <li>After <b>${S().missLimit}</b> missed notes in a part it stops gently and says <i>“Let's try that part again, a little slower 🐢”</i>, goes back to the start of that part, one speed step slower (10 %, never below 30 %), counts a short 3-2-1 and plays the part again.</li>
+  <li>A part is done when at least <b>half</b> of its notes were right. After <b>${S().sectionRetries}</b> replays of the same part it moves on anyway with praise, so she never gets stuck.</li>
+  <li>After a good part (at most one miss) the speed goes up one step again, but never above the speed chosen with 🐢/🐰.</li>
+  <li>⏸ / ▶ always works, also during the message.</li>
+</ul>
+<p>Grown-ups can change both numbers in ⚙️ Settings → Practice.</p>
+<h2>✋ Wait for me</h2>
+<p>The line waits at every note. If no sound is heard for a while (the note wasn't played, or the microphone didn't hear it), the hint shows after half the time and after <b>${S().waitSkip} seconds</b> it gently moves on to the next note (“Let's keep going! 🎵”). Change the time in ⚙️ Settings (0 = wait forever).</p>
 <h2>3-2-1 Go!</h2>
 <p>Every time practice starts (▶ Start, 🎹 Now you try!, ▶ after a pause, ↺ Again) big numbers count <b>3, 2, 1, Go! ⭐</b>, one per second, with a soft tick. Nothing is scored during the countdown. Tap ⏸ or 🏠 to cancel it. You can switch the countdown or its tick off in ⚙️ Settings → Practice.</p>
 <h2>👂 Listen first</h2>
@@ -658,6 +737,7 @@
 <p>The turtle and rabbit buttons change the speed in steps of 10 % (from 30 % to 120 % of the song's tempo), also in the middle of a song. The speed you choose is remembered for that song on this device. The automatic slow-down still helps when many notes are hard, but when it speeds up again after a streak it never goes <b>above</b> the speed you chose (or 100 % if you never touched the buttons).</p>
 <h2>⏱️ Timing</h2>
 <p>In ⚙️ Settings → <i>Timing</i> you choose how early or late a right note may come and still count: <b>Relaxed</b> (default, most forgiving), <b>Normal</b> or <b>Strict</b>. The window grows automatically for slow songs and slow speeds. A right note that is a little early or late simply counts as right; in Play-along a note that comes too late is quietly skipped, never scolded. Relaxed at tempo 90: up to 0.6 s early and 0.8 s late (longer notes: until they end).</p>
+<p><b>If the line seemed stuck:</b> in the old default (Wait for me) the line waited for a note the microphone hadn't heard. Now Play along is the default, Wait for me moves on by itself, and if the iPad microphone stops delivering sound the app restarts it by itself (“🎤 Listening again”).</p>
 <p><b>Digital piano tips:</b> use a normal “piano” sound, one note at a time, and turn the volume up a bit. Keep the room quiet (no TV). If it hears notes nobody played, lower the <i>Microphone sensitivity</i> in Settings. You can also tap the keys on the screen.</p>
 <h2>Writing songs (Simple format)</h2>
 <pre>title: Lazy Song
@@ -761,7 +841,14 @@ E E F G | G F E D | C C D E | E3/2 D/ D2 |]</pre>
     document.addEventListener('visibilitychange', () => { if (document.hidden) { stopListen('stopped'); pausePractice(); } });
     audio.onStateChange = (st) => {
       if (st !== 'interrupted' && st !== 'suspended') return;
-      if (!app.listenStarting) stopListen('stopped');   // (switching the audio session may blip)
+      // Starting the microphone switches the iOS audio session, which can blip
+      // the context to "interrupted" for a moment. That must not pause (and so
+      // freeze) the practice that is just starting: just wake the context up.
+      if (app.listenStarting || performance.now() - (app.micStartedAt || -1e9) < 4000) {
+        try { const p = audio.ctx.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* ignore */ }
+        return;
+      }
+      stopListen('stopped');
       pausePractice();
     };
     audio.onMicEnded = () => { app.input = 'screen'; updateBadges(); toast('The microphone stopped. Tap ▶ to continue.'); };

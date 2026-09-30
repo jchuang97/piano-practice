@@ -5,8 +5,14 @@ grown-up can type in **any** song. Works offline, no build step, no accounts.
 
 - Real sheet music (abcjs, vendored in `js/vendor/`), big and clear, with
   coloured **Do Re Mi** names under the notes and **finger numbers** above them.
-- A pink line walks over the music at the song's tempo and **waits** at each note
-  until it is played. Right notes turn green; wrong notes blink orange (no harsh sounds).
+- A pink line walks over the music at the chosen speed (**🎵 Play along**, the default)
+  or **waits** at each note (**✋ Wait for me**). Right notes turn green; wrong notes blink
+  orange (no harsh sounds).
+- **Parts** (play-along): the song is split into parts of whole bars (~6 notes). After
+  4 missed notes in a part (grown-ups setting) it gently says *"Let's try that part again,
+  a little slower 🐢"*, rewinds to the start of the part, slows one 10 % step (≥ 30 %),
+  counts 3-2-1 and replays it. Half the notes right = on to the next part; after 3
+  replays it moves on anyway with praise. Little stars per note show the part's progress.
 - Listens through the **microphone** (acoustic or digital piano), or a **USB MIDI
   keyboard** on desktop Chrome, or taps on the **on-screen keyboard**.
 - After 3 wrong tries: the right key glows, a hint explains where it is
@@ -20,8 +26,10 @@ grown-up can type in **any** song. Works offline, no build step, no accounts.
   (grown-ups can switch it or its tick off).
 - **🐢 / 🐰 speed buttons** (10 % steps, 30 %–120 %), usable mid-song and
   remembered per song on the device.
-- Slows down automatically when it gets hard, speeds up again after a streak
+- Slows down automatically when it gets hard, speeds up again after good parts
   (but never above the speed picked with 🐢/🐰).
+- Wait-for-me never gets stuck: after 8 s without sound (setting) it shows the hint
+  (halfway) and then moves on gently.
 - **Timing** (grown-ups setting: relaxed / normal / strict, default relaxed):
   how early or late a right note may come; early/late right notes simply count as right.
 - ✋ Wait-for-me / 🎵 Play-along modes, loop bars, metronome, celebration screen.
@@ -110,7 +118,7 @@ run is reset.
 
 *Microphone and iPad audio:* Listen switches the microphone really **off** (stops the
 getUserMedia stream) and sets `navigator.audioSession.type = 'playback'` (Safari 17+);
-practice switches it back on (`'auto'` session). Reason: on iOS an open microphone
+practice switches it back on (`'play-and-record'` session, set before `getUserMedia`). Reason: on iOS an open microphone
 keeps the page in the phone-call style "play-and-record" audio route, where Web Audio
 output can become very quiet or silent — in the first version Listen only *ignored*
 the mic, so after a practice run (mic on) Listen could be silent on the iPad, while
@@ -124,6 +132,46 @@ engine starts with a one-beat lead-in (also in play-along). The engine stays idl
 paused, when resuming) until Go, so mic/MIDI/taps are ignored. Settings `countdown`
 and `countdownSound` (both on by default).
 
+## Play-along parts and never getting stuck (details)
+
+**Why the line froze (Sept 2026 report).** "Now you try" started practice in the
+then-default *Wait for me* mode, which waited at a note until the microphone heard
+it, with no way out (⏸/▶ only paused and resumed the same wait). On the iPad the
+microphone could also be silent right after Listen: Listen set
+`navigator.audioSession.type = 'playback'` and practice restored `'auto'` just
+before `getUserMedia`; WebKit ends/blocks capture when the session isn't
+play-and-record, and starting the mic can blip the AudioContext to
+"interrupted", which the app treated as "pause". Fixes:
+- `audio._startMic` sets the session to `'play-and-record'` before `getUserMedia`.
+- A context "interrupted/suspended" blip within 4 s of starting the mic only resumes
+  the context (no pause).
+- Mic watchdog (`micWatch` in `js/app.js`): a frozen analyser (identical samples for
+  1.5 s) or pure digital silence for 4 s during practice → resume the context and
+  restart the mic (at most every 15 s), toast "🎤 Listening again".
+- Play along is the new default. Saved settings from older versions (no `schema`)
+  that say `mode: 'wait'` are switched to play-along once (`schema: 2`); choosing
+  Wait for me afterwards is kept.
+
+**Parts** (`_buildSections` in `js/practice.js`): whole bars are grouped until a part
+has ≥ 5 notes (or 4 bars); a last part with < 3 notes joins the previous one. Lazy
+Song → 2 parts of 2 bars / 6 notes; Mary → parts of 2 bars.
+- Every note of a part is scored once: right (in its timing window) or missed.
+- `missLimit` (default 4) misses in a part → `_retrySection`: clear the part (and
+  everything after it), speed one 10 % step down (floor 30 %), line back to one beat
+  before the part, engine paused; the app shows the 🐢 message (2.2 s), a short
+  3-2-1 (0.7 s steps, if the countdown is on) and resumes.
+- When all notes of a part are decided: ≥ half right → pass (`onSectionPass`, "You
+  did it! 🎉" after a replay); if ≤ 1 miss the speed goes one step up, capped at the
+  🐢/🐰 ceiling. Otherwise replay, until `sectionRetries` (default 3) replays → move on
+  (`onSectionMoveOn`, "Great trying! Let's keep going 🌟").
+- With no input at all the song still reaches the end.
+
+**Wait-for-me escape** (`_waitEscape`): quiet time counts from the moment the line
+stops at a note; any sound the tracker hears (`engine.activity()`) restarts it, pause
+time doesn't count. Hint at half of `waitSkip` (≥ 2.5 s for ≥ 5 s settings), skip at
+`waitSkip` s (default 8; also after 2.5 × that in total even if there is noise; 0 = off).
+A skipped note is marked like a missed one, "Let's keep going! 🎵".
+
 ## Code map
 
 | File | What it does |
@@ -136,7 +184,7 @@ and `countdownSound` (both on by default).
 | `js/score.js` | renders with abcjs, maps notes to screen positions, cursor, colours, labels |
 | `js/keyboard.js` | on-screen keyboard |
 | `js/hand.js` | hand diagram SVG with the finger highlighted |
-| `js/practice.js` | practice engine: wait / play-along, timing windows, hints, adaptive + manual speed, loop |
+| `js/practice.js` | practice engine: play-along (parts, replays) / wait (escape), timing windows, hints, adaptive + manual speed, loop |
 | `js/listen.js` | Listen mode: plays the song, moves the cursor, lights keys, no scoring |
 | `js/editor.js` | grown-ups' song editor with live preview |
 | `js/app.js` | screens, settings, input routing, feedback, end screen |
@@ -148,7 +196,7 @@ python3 -m http.server 8765 &          # from this folder
 node tests/format-test.js              # song format unit tests
 node tests/pitch-test.js               # pitch detector on synthetic piano tones
 node tests/make-wavs.js && node tests/mic-e2e.js   # full mic pipeline in Chrome (fake mic)
-node tests/e2e.js                      # UI end-to-end in headless Chrome (incl. timing, 🐢/🐰, 👂 Listen on every song, countdown, layout)
+node tests/e2e.js                      # UI end-to-end in headless Chrome (incl. timing, 🐢/🐰, 👂 Listen on every song, countdown, play-along parts, wait escape, layout)
 node tests/webkit-ipad.js              # Safari engine (WebKit) with the iPad Pro 11 profile
 ```
 (The browser tests need `playwright-core` — `cd tools && npm i` — and Chrome at `/usr/bin/google-chrome`.)
