@@ -5,20 +5,25 @@
   'use strict';
   const PP = root.PP = root.PP || {};
 
+  // Text of built-in songs as shipped before they had a version, to tell an
+  // untouched old copy from one a grown-up edited (that one is kept as a copy).
+  const OLD_BUILTIN_TEXT = { 'lazy-song': "title: Lazy Song\ntempo: 60\ntime: 3/4\nlook: open\n// The teacher's lesson: round notes, one beat each.\n// /5 /2 /1 = finger numbers (1 = thumb, 5 = pinky), right hand.\nSi4/5 Fa#4/2 Mi4/1 | Si4/5 Fa#4/2 Mi4/1 |\nSi4/5 Fa#4/2 Mi4/1 |\n// last bar: the hand moves down one key\nSi4/5 Re#4/1 Mi4/2 |" };
+
   // Built-in songs. The first one is the lesson from the teacher.
   const BUILTIN = [
     {
-      id: 'lazy-song', builtin: true, format: 'simple', title: 'Lazy Song',
+      id: 'lazy-song', builtin: true, version: 2, format: 'simple', title: 'Lazy Song',
       text: `title: Lazy Song
 tempo: 60
 time: 3/4
 look: open
-// The teacher's lesson: round notes, one beat each.
-// /5 /2 /1 = finger numbers (1 = thumb, 5 = pinky), right hand.
-Si4/5 Fa#4/2 Mi4/1 | Si4/5 Fa#4/2 Mi4/1 |
-Si4/5 Fa#4/2 Mi4/1 |
-// last bar: the hand moves down one key
-Si4/5 Re#4/1 Mi4/2 |`,
+// The teacher's lesson (version 2, Oct 2026): round notes, one beat each, right hand.
+// The numbers after / are fingers (1 = thumb, 5 = pinky).
+// Line 1: Fa# Mi Re three times, then the hand stretches down: Fa# Do# Si.
+// (Si3 is the Si just BELOW middle Do. Do# and Fa# are black keys.)
+Fa#4/3 Mi4/2 Re4/1 | Fa#4/3 Mi4/2 Re4/1 | Fa#4/3 Mi4/2 Re4/1 | Fa#4/5 Do#4/2 Si3/1 |
+// Line 2: the same pattern higher up, Re Do# Si, then Re La Sol to finish.
+Re5/3 Do#5/2 Si4/1 | Re5/3 Do#5/2 Si4/1 | Re5/3 Do#5/2 Si4/1 | Re5/5 La4/2 Sol4/1 |`,
     },
     {
       id: 'mary', builtin: true, format: 'simple', title: 'Mary Had a Little Lamb',
@@ -115,12 +120,37 @@ K:C
     catch (e) { console.warn('Could not save', e); return false; }
   }
 
+  /**
+   * Built-ins are copied into localStorage on the first run. When a built-in
+   * gets a new version (the teacher's new Lazy Song), the stored copy is
+   * replaced in place (same id, so the per-song speed stays). If the stored copy
+   * had been edited by a grown-up, that edit is kept as a separate song
+   * "… (my version)". User-made songs are never touched. Returns true if changed.
+   */
+  function upgradeBuiltins(songs) {
+    let changed = false;
+    BUILTIN.forEach(b => {
+      const i = songs.findIndex(s => s.id === b.id);
+      if (i < 0) return;                                   // (deleted on purpose: leave it)
+      const cur = songs[i];
+      if ((cur.version || 1) >= (b.version || 1)) return;
+      const untouched = cur.text === b.text || cur.text === OLD_BUILTIN_TEXT[b.id];
+      if (!untouched && typeof cur.text === 'string') {
+        songs.push({ id: 'song-' + Date.now().toString(36) + '-' + b.id, title: (cur.title || b.title) + ' (my version)', format: cur.format || 'simple', text: cur.text });
+      }
+      songs[i] = Object.assign({}, b);
+      changed = true;
+    });
+    return changed;
+  }
+
   PP.store = {
     BUILTIN, DEFAULT_SETTINGS,
     /** All songs; the first run seeds the built-in songs. */
     getSongs() {
       let songs = load(SONGS_KEY, null);
       if (!Array.isArray(songs)) { songs = BUILTIN.map(s => Object.assign({}, s)); save(SONGS_KEY, songs); }
+      else if (upgradeBuiltins(songs)) save(SONGS_KEY, songs);
       return songs;
     },
     saveSongs(songs) { return save(SONGS_KEY, songs); },

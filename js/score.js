@@ -51,19 +51,32 @@
       const barsPerLine = prep.look === 'open' ? 4 : (prep.time && prep.time[0] >= 6 ? 2 : 4);
       // Try the chosen size first; if the song doesn't fit on screen, shrink a
       // little (down to 60%) so short songs are fully visible without scrolling.
-      let res, scale = maxScale;
-      for (let attempt = 0; attempt < 8; attempt++) {
+      // (If it still doesn't fit at 60 %, the notes are packed a bit closer
+      // first - e.g. Lazy Song v2: 8 bars in 2 lines like the teacher's sheet -
+      // and only then made a little smaller still, never under 1.2.)
+      let res, scale = maxScale, minSpacing = 1.6;
+      const floor = Math.max(1.2, maxScale * 0.6), floor2 = Math.max(1.2, maxScale * 0.5);
+      for (let attempt = 0; attempt < 12; attempt++) {
         const staffwidth = Math.max(300, (width - 30) / scale);
         this.inner.innerHTML = '';
         res = root.ABCJS.renderAbc(this.inner, abc, {
           add_classes: true, staffwidth, responsive: 'resize',
-          wrap: { minSpacing: 1.6, maxSpacing: 3.2, preferredMeasuresPerLine: barsPerLine },
+          wrap: { minSpacing, maxSpacing: 3.2, preferredMeasuresPerLine: barsPerLine },
           paddingtop: 10, paddingbottom: opts.namesBelow ? 36 : 16, paddingleft: 10, paddingright: 10,
           selectTypes: false,
         });
         const svgH = [...this.inner.querySelectorAll('svg')].reduce((h, el) => h + el.getBoundingClientRect().height, 0);
-        if (opts.noFit || svgH <= height - 16 || scale <= Math.max(1.2, maxScale * 0.6)) break;
-        scale = Math.max(1.2, maxScale * 0.6, scale * 0.88);
+        if (opts.noFit || svgH <= height - 16) break;
+        if (scale <= floor + 1e-6) {
+          // at 60 %: go on only if notes (with their names) are really cut off
+          const top = this.inner.getBoundingClientRect().top;
+          const low = [...this.inner.querySelectorAll('.abcjs-note')].reduce((m, el) => Math.max(m, el.getBoundingClientRect().bottom - top), 0);
+          if (low + (opts.namesBelow ? 40 : 10) <= height) break;
+        }
+        if (scale > floor + 1e-6) scale = Math.max(floor, scale * 0.88);
+        else if (minSpacing > 1.25) minSpacing = 1.2;
+        else if (scale > floor2 + 1e-6) scale = Math.max(floor2, scale * 0.9);
+        else break;
       }
       this.scale = scale;
       this.tune = res && res[0];

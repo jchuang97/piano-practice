@@ -718,7 +718,7 @@
   <li>After ${S().hintAfter} wrong notes a key on the screen keyboard glows and a hint appears.</li>
 </ol>
 <h2>🎵 Play along: little parts, played again if needed</h2>
-<p>The song is split into little <b>parts</b> of whole bars, about 6 notes each (Lazy Song: 2 bars = 6 notes). The stars at the top (<b>Part 1/2 ☆☆☆☆☆☆</b>) fill with a gold ★ for every right note of the part.</p>
+<p>The song is split into little <b>parts</b> of whole bars, about 6 notes each (Lazy Song: 8 bars = 4 parts of 2 bars / 6 notes). The stars at the top (<b>Part 1/4 ☆☆☆☆☆☆</b>) fill with a gold ★ for every right note of the part.</p>
 <ul>
   <li>The line <b>never stops by itself</b>: if she doesn't play, it keeps moving.</li>
   <li>After <b>${S().missLimit}</b> missed notes in a part it stops gently and says <i>“Let's try that part again, a little slower 🐢”</i>, goes back to the start of that part, one speed step slower (10 %, never below 30 %), counts a short 3-2-1 and plays the part again.</li>
@@ -744,8 +744,8 @@
 tempo: 60
 time: 3/4
 look: open
-Si4/5 Fa#4/2 Mi4/1 | Si4/5 Fa#4/2 Mi4/1 |
-Si4/5 Fa#4/2 Mi4/1 | Si4/5 Re#4/1 Mi4/2 |</pre>
+Fa#4/3 Mi4/2 Re4/1 | Fa#4/3 Mi4/2 Re4/1 | Fa#4/3 Mi4/2 Re4/1 | Fa#4/5 Do#4/2 Si3/1 |
+Re5/3 Do#5/2 Si4/1 | Re5/3 Do#5/2 Si4/1 | Re5/3 Do#5/2 Si4/1 | Re5/5 La4/2 Sol4/1 |</pre>
 <ul>
   <li><b>A note</b> = its name + the octave number: <code>Do4 Re4 Mi4 Fa4 Sol4 La4 Si4</code>, then <code>Do5</code> is the next Do up. <code>Do4</code> is <b>middle C</b>. Letters also work: <code>C4 D4 E4 F4 G4 A4 B4</code>.</li>
   <li><b>Sharps and flats:</b> <code>#</code> for sostenido (<code>Fa#4</code>), <code>b</code> for bemol (<code>Sib4</code>, <code>Bb4</code>).</li>

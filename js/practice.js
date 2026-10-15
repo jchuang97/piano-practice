@@ -144,7 +144,7 @@
     }
 
     // ------------------------------------------------------------------ sections
-    /** Parts of whole bars with about 6 notes each (Lazy Song: 2 bars = 6 notes). */
+    /** Parts of whole bars with about 6 notes each (Lazy Song: 8 bars = 4 parts of 2 bars / 6 notes). */
     _buildSections() {
       const r = this._range(), ev = this.events, out = [];
       if (!ev.length) return out;

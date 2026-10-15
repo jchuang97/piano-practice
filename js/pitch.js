@@ -152,8 +152,13 @@
     process(t, level, freq, clarity) {
       const o = this.opts;
       // --- background noise floor: slow rise, fast fall ---
+      // The floor only learns from frames that are NOT a clear piano tone: in a
+      // long legato song (Lazy Song v2, 24 notes that keep ringing) the music
+      // itself used to push the floor (and so the gate) up until quiet notes
+      // were no longer heard after ~20 s in a noisy room.
+      const tonal = freq && (clarity === undefined || clarity >= o.minClarity) && level > this.effectiveGate;
       if (level < this.noiseFloor) this.noiseFloor = this.noiseFloor * 0.9 + level * 0.1;
-      else this.noiseFloor = this.noiseFloor * 0.9995 + level * 0.0005;
+      else if (!tonal) this.noiseFloor = this.noiseFloor * 0.9995 + level * 0.0005;
       this.noiseFloor = Math.min(this.noiseFloor, 0.05);
 
       // --- onset detection (sudden level jump) ---

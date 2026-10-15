@@ -118,7 +118,7 @@ Do4 q, Re4 q, Mi4 q, Fa4 q | Sol4 w |`;
       if (prep.errors.length) { this.cb.toast('Please fix the ✏️ mistakes first'); this.refreshPreview(); return false; }
       const existing = store.getSongs().find(s => s.id === song.id);
       const out = { id: song.id || store.newId(), title: prep.title, format: song.format, text: song.text };
-      if (existing && existing.builtin) out.builtin = true;
+      if (existing && existing.builtin) { out.builtin = true; if (existing.version) out.version = existing.version; }
       store.upsertSong(out);
       this.currentId = out.id; this.dirty = false;
       this.renderList(); this.refreshPreview();

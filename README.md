@@ -57,8 +57,8 @@ title: Lazy Song
 tempo: 60
 time: 3/4
 look: open
-Si4/5 Fa#4/2 Mi4/1 | Si4/5 Fa#4/2 Mi4/1 |
-Si4/5 Fa#4/2 Mi4/1 | Si4/5 Re#4/1 Mi4/2 |
+Fa#4/3 Mi4/2 Re4/1 | Fa#4/3 Mi4/2 Re4/1 | Fa#4/3 Mi4/2 Re4/1 | Fa#4/5 Do#4/2 Si3/1 |
+Re5/3 Do#5/2 Si4/1 | Re5/3 Do#5/2 Si4/1 | Re5/3 Do#5/2 Si4/1 | Re5/5 La4/2 Sol4/1 |
 ```
 
 - **Note** = name + octave number: `Do4 Re4 Mi4 Fa4 Sol4 La4 Si4`, then `Do5`.
@@ -154,7 +154,7 @@ play-and-record, and starting the mic can blip the AudioContext to
 
 **Parts** (`_buildSections` in `js/practice.js`): whole bars are grouped until a part
 has ≥ 5 notes (or 4 bars); a last part with < 3 notes joins the previous one. Lazy
-Song → 2 parts of 2 bars / 6 notes; Mary → parts of 2 bars.
+Song (v2, 8 bars) → 4 parts of 2 bars / 6 notes; Mary → parts of 2 bars.
 - Every note of a part is scored once: right (in its timing window) or missed.
 - `missLimit` (default 4) misses in a part → `_retrySection`: clear the part (and
   everything after it), speed one 10 % step down (floor 30 %), line back to one beat
@@ -171,6 +171,17 @@ stops at a note; any sound the tracker hears (`engine.activity()`) restarts it, 
 time doesn't count. Hint at half of `waitSkip` (≥ 2.5 s for ≥ 5 s settings), skip at
 `waitSkip` s (default 8; also after 2.5 × that in total even if there is noise; 0 = off).
 A skipped note is marked like a missed one, "Let's keep going! 🎵".
+
+## Built-in songs and updates
+
+Built-ins are copied into `localStorage` (`pianoPractice.songs.v1`) on the first run.
+Each built-in has a `version`; on load (`upgradeBuiltins` in `js/songs.js`) a stored
+copy with a lower version is replaced in place by the new one (same id, so the
+song's 🐢/🐰 speed is kept). If a grown-up had edited the old copy, that edit is kept
+as a separate song "… (my version)". User-made songs are never touched; a deleted
+built-in is not brought back (the editor's restore button does that).
+Lazy Song is **version 2** (teacher's lesson 2, Oct 2026, 8 bars, B3–D5):
+`Fa# Mi Re ×3, Fa# Do# Si(3) | Re Do# Si ×3, Re La Sol`. Unit test: `node tests/store-test.js`.
 
 ## Code map
 
@@ -194,6 +205,7 @@ A skipped note is marked like a missed one, "Let's keep going! 🎵".
 ```
 python3 -m http.server 8765 &          # from this folder
 node tests/format-test.js              # song format unit tests
+node tests/store-test.js               # built-in song upgrade (old Lazy Song -> v2, edits/user songs kept)
 node tests/pitch-test.js               # pitch detector on synthetic piano tones
 node tests/make-wavs.js && node tests/mic-e2e.js   # full mic pipeline in Chrome (fake mic)
 node tests/e2e.js                      # UI end-to-end in headless Chrome (incl. timing, 🐢/🐰, 👂 Listen on every song, countdown, play-along parts, wait escape, layout)
