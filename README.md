@@ -183,6 +183,15 @@ built-in is not brought back (the editor's restore button does that).
 Lazy Song is **version 2** (teacher's lesson 2, Oct 2026, 8 bars, B3–D5):
 `Fa# Mi Re ×3, Fa# Do# Si(3) | Re Do# Si ×3, Re La Sol`. Unit test: `node tests/store-test.js`.
 
+New built-ins carry `addedIn` (catalog number); the device remembers the newest
+catalog it has seen (`pianoPractice.builtinCatalog.v1`) and adds a newer built-in
+once, right after the one before it in the list (deleting it later is respected).
+Catalog 2 (Nov 2026) adds **Into the Unknown (easy)**: Frozen 2 chorus hook and
+the "ah-ah" siren call, right hand, D minor (a half step below the film's E♭ minor),
+Re4–Re5, one black key (Do#5), 4/4 at 76, 10 bars, 31 notes, parts =
+siren | chorus 1 | chorus 2 | chorus 3 | siren. Hand jumps are marked in the song's
+comments. (No lyrics in the app.)
+
 ## Code map
 
 | File | What it does |

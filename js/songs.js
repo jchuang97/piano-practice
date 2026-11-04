@@ -26,6 +26,27 @@ Fa#4/3 Mi4/2 Re4/1 | Fa#4/3 Mi4/2 Re4/1 | Fa#4/3 Mi4/2 Re4/1 | Fa#4/5 Do#4/2 Si3
 Re5/3 Do#5/2 Si4/1 | Re5/3 Do#5/2 Si4/1 | Re5/3 Do#5/2 Si4/1 | Re5/5 La4/2 Sol4/1 |`,
     },
     {
+      id: 'into-the-unknown', builtin: true, version: 1, addedIn: 2, format: 'simple', title: 'Into the Unknown (easy)',
+      text: `title: Into the Unknown (easy)
+tempo: 76
+time: 4/4
+// Frozen 2 - a very easy right-hand version for home practice.
+// Key: D minor (half a step lower than the film), range Re4 to Re5.
+// Only one black key: Do# near the end. Simple quarter, half and whole notes.
+// START: thumb (1) on Re4 (middle Re). Re=1 Mi=2 Fa=3 Sol=4 La=5.
+// The magic voice calling "ah-ah, ah-ah" - twice:
+Fa4/3 q Mi4/2 q Fa4/3 q Re4/1 q | Fa4/3 q Mi4/2 q Fa4/3 q Re4/1 q |
+// The chorus, first time (thumb on Re, finger 5 on La):
+Re4/1 q Re4/1 q Re4/1 q La4/5 q | La4/5 w |
+// Second time: a little stretch - finger 4 on La, finger 5 on Si.
+Re4/1 q Re4/1 q Re4/1 q La4/4 q | Si4/5 h La4/4 h |
+// Third time. HAND JUMP after the three Re: move the whole hand up so the
+// thumb plays La4, then Do# (black key) with finger 3, Re5 with 4, Si4 with 2.
+Re4/1 q Re4/1 q Re4/1 q La4/1 q | Re5/4 q Do#5/3 q Re5/4 q Si4/2 q |
+// HAND JUMP back down: thumb on Re4 again. The magic voice once more.
+Fa4/3 h Mi4/2 q Fa4/3 q | Re4/1 w |`,
+    },
+    {
       id: 'mary', builtin: true, format: 'simple', title: 'Mary Had a Little Lamb',
       text: `title: Mary Had a Little Lamb
 tempo: 90
@@ -73,6 +94,7 @@ K:C
 
   const SONGS_KEY = 'pianoPractice.songs.v1';
   const SETTINGS_KEY = 'pianoPractice.settings.v1';
+  const CATALOG_KEY = 'pianoPractice.builtinCatalog.v1'; // newest built-in catalog this device has seen
   const SPEEDS_KEY = 'pianoPractice.speeds.v1';    // { songId: percent } chosen with 🐢/🐰
 
   const DEFAULT_SETTINGS = {
@@ -127,8 +149,22 @@ K:C
    * had been edited by a grown-up, that edit is kept as a separate song
    * "… (my version)". User-made songs are never touched. Returns true if changed.
    */
+  // Built-ins added after the first release carry `addedIn` (catalog number).
+  // A device remembers which catalog it has seen; newer built-ins are added
+  // once (right after Lazy Song) - a built-in deleted on purpose stays deleted.
+  const CATALOG = Math.max(1, ...BUILTIN.map(b => b.addedIn || 1));
   function upgradeBuiltins(songs) {
     let changed = false;
+    const seen = +load(CATALOG_KEY, 1) || 1;
+    if (seen < CATALOG) {
+      BUILTIN.forEach((b, idx) => {
+        if ((b.addedIn || 1) <= seen || songs.some(s => s.id === b.id)) return;
+        const prev = idx > 0 ? songs.findIndex(s => s.id === BUILTIN[idx - 1].id) : -1;
+        songs.splice(prev >= 0 ? prev + 1 : Math.min(idx, songs.length), 0, Object.assign({}, b));
+      });
+      save(CATALOG_KEY, CATALOG);
+      changed = true;
+    }
     BUILTIN.forEach(b => {
       const i = songs.findIndex(s => s.id === b.id);
       if (i < 0) return;                                   // (deleted on purpose: leave it)
@@ -149,7 +185,7 @@ K:C
     /** All songs; the first run seeds the built-in songs. */
     getSongs() {
       let songs = load(SONGS_KEY, null);
-      if (!Array.isArray(songs)) { songs = BUILTIN.map(s => Object.assign({}, s)); save(SONGS_KEY, songs); }
+      if (!Array.isArray(songs)) { songs = BUILTIN.map(s => Object.assign({}, s)); save(SONGS_KEY, songs); save(CATALOG_KEY, CATALOG); }
       else if (upgradeBuiltins(songs)) save(SONGS_KEY, songs);
       return songs;
     },

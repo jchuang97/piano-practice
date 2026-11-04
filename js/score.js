@@ -48,12 +48,15 @@
       const width = opts.width || this.wrap.clientWidth || 800;
       const height = this.wrap.clientHeight || 400;
       const maxScale = (SCALES[opts.size] || SCALES.large) * (width < 700 ? 0.8 : 1);
-      const barsPerLine = prep.look === 'open' ? 4 : (prep.time && prep.time[0] >= 6 ? 2 : 4);
+      let barsPerLine = prep.look === 'open' ? 4 : (prep.time && prep.time[0] >= 6 ? 2 : 4);
       // Try the chosen size first; if the song doesn't fit on screen, shrink a
       // little (down to 60%) so short songs are fully visible without scrolling.
       // (If it still doesn't fit at 60 %, the notes are packed a bit closer
       // first - e.g. Lazy Song v2: 8 bars in 2 lines like the teacher's sheet -
       // and only then made a little smaller still, never under 1.2.)
+      // (last try for short songs: two lines, e.g. 10 bars = 2 x 5)
+      const nBars = (prep.abc.match(/\|/g) || []).length;
+      this._morePerLine = false;
       let res, scale = maxScale, minSpacing = 1.6;
       const floor = Math.max(1.2, maxScale * 0.6), floor2 = Math.max(1.2, maxScale * 0.5);
       for (let attempt = 0; attempt < 12; attempt++) {
@@ -76,6 +79,7 @@
         if (scale > floor + 1e-6) scale = Math.max(floor, scale * 0.88);
         else if (minSpacing > 1.25) minSpacing = 1.2;
         else if (scale > floor2 + 1e-6) scale = Math.max(floor2, scale * 0.9);
+        else if (!this._morePerLine && nBars <= 10 && Math.ceil(nBars / 2) > barsPerLine) { this._morePerLine = true; barsPerLine = Math.ceil(nBars / 2); scale = floor; minSpacing = 1.6; }
         else break;
       }
       this.scale = scale;
