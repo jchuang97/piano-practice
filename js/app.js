@@ -27,16 +27,21 @@
 
   // ------------------------------------------------------------------ home
   const CARD_COLORS = ['#8b5cf6', '#ec4899', '#f97316', '#10b981', '#3b82f6', '#eab308', '#06b6d4', '#ef4444'];
-  const CARD_EMOJI = ['🌟', '🐑', '🥐', '✨', '🎶', '🦋', '🐢', '🌈', '🚀', '🐱'];
+  // Each built-in song keeps its own icon (by id), so adding a song never shifts the others.
+  const SONG_EMOJI = { 'lazy-song': '🌟', 'into-the-unknown': '❄️', 'mary': '🐑', 'hot-cross-buns': '🥐', 'twinkle': '✨', 'ode-to-joy': '🎶' };
+  // Your own songs cycle through these.
+  const CARD_EMOJI = ['🦋', '🐢', '🌈', '🚀', '🐱'];
   function renderHome() {
     const grid = $('songGrid');
     grid.innerHTML = '';
+    let custom = 0;
     store.getSongs().forEach((song, i) => {
+      const emoji = SONG_EMOJI[song.id] || CARD_EMOJI[custom++ % CARD_EMOJI.length];
       const b = document.createElement('button');
       b.className = 'song-card' + (i === 0 && song.id === 'lazy-song' ? ' first' : '');
       b.style.background = `linear-gradient(135deg, ${CARD_COLORS[i % CARD_COLORS.length]}, ${CARD_COLORS[(i + 3) % CARD_COLORS.length]})`;
       const p = M.prepareSong(song);
-      b.innerHTML = `<span class="emoji">${CARD_EMOJI[i % CARD_EMOJI.length]}</span><span>${esc(p.title || song.title)}</span>`;
+      b.innerHTML = `<span class="emoji">${emoji}</span><span>${esc(p.title || song.title)}</span>`;
       b.addEventListener('click', () => openSong(song.id));
       grid.appendChild(b);
     });

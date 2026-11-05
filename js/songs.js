@@ -26,24 +26,20 @@ Fa#4/3 Mi4/2 Re4/1 | Fa#4/3 Mi4/2 Re4/1 | Fa#4/3 Mi4/2 Re4/1 | Fa#4/5 Do#4/2 Si3
 Re5/3 Do#5/2 Si4/1 | Re5/3 Do#5/2 Si4/1 | Re5/3 Do#5/2 Si4/1 | Re5/5 La4/2 Sol4/1 |`,
     },
     {
-      id: 'into-the-unknown', builtin: true, version: 1, addedIn: 2, format: 'simple', title: 'Into the Unknown (easy)',
+      id: 'into-the-unknown', builtin: true, version: 2, addedIn: 2, format: 'simple', title: 'Into the Unknown (easy)',
       text: `title: Into the Unknown (easy)
 tempo: 76
 time: 4/4
-// Frozen 2 - a very easy right-hand version for home practice.
-// Key: D minor (half a step lower than the film), range Re4 to Re5.
-// Only one black key: Do# near the end. Simple quarter, half and whole notes.
-// START: thumb (1) on Re4 (middle Re). Re=1 Mi=2 Fa=3 Sol=4 La=5.
-// The magic voice calling "ah-ah, ah-ah" - twice:
+// Frozen 2 - just the magic voice that calls Elsa: "ah-ah, ah-ah!"
+// Only white keys, no hand jumps. Fa Mi Fa Re, again and again.
+// START: thumb (1) on Re4 (middle Re). Re=1 Mi=2 Fa=3.
+// The magic voice calls - twice:
 Fa4/3 q Mi4/2 q Fa4/3 q Re4/1 q | Fa4/3 q Mi4/2 q Fa4/3 q Re4/1 q |
-// The chorus, first time (thumb on Re, finger 5 on La):
-Re4/1 q Re4/1 q Re4/1 q La4/5 q | La4/5 w |
-// Second time: a little stretch - finger 4 on La, finger 5 on Si.
-Re4/1 q Re4/1 q Re4/1 q La4/4 q | Si4/5 h La4/4 h |
-// Third time. HAND JUMP after the three Re: move the whole hand up so the
-// thumb plays La4, then Do# (black key) with finger 3, Re5 with 4, Si4 with 2.
-Re4/1 q Re4/1 q Re4/1 q La4/1 q | Re5/4 q Do#5/3 q Re5/4 q Si4/2 q |
-// HAND JUMP back down: thumb on Re4 again. The magic voice once more.
+// Slower now, like an echo far away:
+Fa4/3 h Mi4/2 h | Fa4/3 h Re4/1 h |
+// It calls again - twice:
+Fa4/3 q Mi4/2 q Fa4/3 q Re4/1 q | Fa4/3 q Mi4/2 q Fa4/3 q Re4/1 q |
+// Last echo, then rest your thumb on Re:
 Fa4/3 h Mi4/2 q Fa4/3 q | Re4/1 w |`,
     },
     {
